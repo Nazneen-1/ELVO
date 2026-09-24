@@ -9,31 +9,60 @@ import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
 const app = express();
 
-// Security HTTP headers
-app.use(helmet());
-
-// Cross-Origin Resource Sharing
+// Security HTTP headers with cross-origin allowance
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, or Postman)
-      if (!origin) return callback(null, true);
-
-      const allowedOrigins = [
-        config.clientUrl,
-        'http://localhost:5173',
-        'http://localhost:3000',
-        'http://127.0.0.1:5173',
-      ];
-
-      if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
-        return callback(null, true);
-      }
-      return callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
+
+// Allowed Origins for Deployment and Localhost
+const allowedOrigins = [
+  'https://elvo-two.vercel.app',
+  'https://elvo.onrender.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://localhost:5000',
+  'http://127.0.0.1:5000',
+];
+
+if (config.clientUrl) {
+  const normalizedClientUrl = config.clientUrl.replace(/\/+$/, '');
+  if (!allowedOrigins.includes(normalizedClientUrl)) {
+    allowedOrigins.push(normalizedClientUrl);
+  }
+}
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Allow mobile apps, curl, Postman, server-to-server
+  const normalized = origin.replace(/\/+$/, '');
+
+  if (allowedOrigins.includes(normalized)) return true;
+  if (normalized.endsWith('.vercel.app')) return true;
+  if (normalized.endsWith('.onrender.com')) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) return true;
+
+  return false;
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Authorization'],
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Body parser
 app.use(express.json({ limit: '10kb' }));

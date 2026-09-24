@@ -4,13 +4,11 @@ import { config } from '../config/env.js';
 
 export const protect = async (req, res, next) => {
   let token;
+  const authHeader = req.headers.authorization || req.headers.Authorization;
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
+  if (authHeader && authHeader.trim().toLowerCase().startsWith('bearer ')) {
     try {
-      token = req.headers.authorization.split(' ')[1];
+      token = authHeader.trim().substring(7).trim();
 
       // Verify token
       const decoded = jwt.verify(token, config.jwtSecret);
@@ -36,10 +34,8 @@ export const protect = async (req, res, next) => {
     }
   }
 
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: 'Not authorized, no token provided',
-    });
-  }
+  return res.status(401).json({
+    success: false,
+    message: 'Not authorized, no token provided',
+  });
 };
