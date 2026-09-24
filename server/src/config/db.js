@@ -5,18 +5,17 @@ export const connectDB = async () => {
   const uri = config.MONGODB_URI || config.mongodbUri || process.env.MONGODB_URI;
 
   if (!uri) {
-    console.warn('⚠️  MONGODB_URI is not defined in environment variables. Database not connected.');
+    console.error('❌ MONGODB_URI is not defined in .env file!');
     return;
   }
 
   try {
     const conn = await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000,
     });
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);
+    console.log(`✅ MongoDB Connected Successfully: ${conn.connection.host} (DB: ${conn.connection.name})`);
   } catch (error) {
     console.error(`❌ MongoDB Connection Error: ${error.message}`);
-    // In production, failure to connect should exit process
     if (config.nodeEnv === 'production') {
       process.exit(1);
     }
