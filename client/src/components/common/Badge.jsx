@@ -1,0 +1,41 @@
+import React from 'react';
+import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export const Badge = ({
+  children,
+  variant = 'indigo',
+  size = 'sm',
+  className = '',
+}) => {
+  const variants = {
+    indigo: 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border-indigo-200/60 dark:border-indigo-800/40',
+    emerald: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800/40',
+    amber: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/40',
+    rose: 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-200/60 dark:border-rose-800/40',
+    sky: 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border-sky-200/60 dark:border-sky-800/40',
+    purple: 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-200/60 dark:border-purple-800/40',
+    slate: 'bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 border-slate-200 dark:border-zinc-700',
+  };
+
+  const sizes = {
+    xs: 'text-[10px] px-1.5 py-0.5 rounded-md font-medium',
+    sm: 'text-xs px-2.5 py-0.5 rounded-lg font-medium',
+    md: 'text-sm px-3 py-1 rounded-xl font-medium',
+  };
+
+  return (
+    <span
+      className={twMerge(
+        clsx(
+          'inline-flex items-center gap-1 border',
+          variants[variant] || variants.indigo,
+          sizes[size],
+          className
+        )
+      )}
+    >
+      {children}
+    </span>
+  );
+};
