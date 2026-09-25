@@ -5,6 +5,9 @@ import morgan from 'morgan';
 import { config } from './config/env.js';
 import authRoutes from './routes/authRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
+import workspaceRoutes from './routes/workspaceRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
 const app = express();
@@ -79,7 +82,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    service: 'CalFlow API',
+    service: 'ELVO API',
     environment: config.nodeEnv,
   });
 });
@@ -87,6 +90,9 @@ app.get('/api/health', (req, res) => {
 // Mount API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 and Global Error Handling
 app.use(notFound);

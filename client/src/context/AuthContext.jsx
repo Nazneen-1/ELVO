@@ -5,13 +5,13 @@ const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('calflow_token'));
+  const [token, setToken] = useState(() => localStorage.getItem('elvo_token'));
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   // Hydrate user profile if token exists on mount
   const loadUser = useCallback(async () => {
-    const savedToken = localStorage.getItem('calflow_token');
+    const savedToken = localStorage.getItem('elvo_token');
     if (!savedToken) {
       setIsLoading(false);
       return;
@@ -24,7 +24,7 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Failed to load user:', err);
-      localStorage.removeItem('calflow_token');
+      localStorage.removeItem('elvo_token');
       setToken(null);
       setUser(null);
     } finally {
@@ -44,7 +44,7 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.register({ name, email, password });
       if (response.success) {
         const { user: newUser, token: newToken } = response.data;
-        localStorage.setItem('calflow_token', newToken);
+        localStorage.setItem('elvo_token', newToken);
         setToken(newToken);
         setUser(newUser);
         return { success: true };
@@ -66,7 +66,7 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.login({ email, password });
       if (response.success) {
         const { user: loggedInUser, token: newToken } = response.data;
-        localStorage.setItem('calflow_token', newToken);
+        localStorage.setItem('elvo_token', newToken);
         setToken(newToken);
         setUser(loggedInUser);
         return { success: true };
@@ -82,7 +82,7 @@ export const AuthProvider = ({ children }) => {
 
   // Logout
   const logout = () => {
-    localStorage.removeItem('calflow_token');
+    localStorage.removeItem('elvo_token');
     setToken(null);
     setUser(null);
   };

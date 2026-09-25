@@ -18,7 +18,7 @@ export const Navbar = () => {
             <Calendar className="w-5 h-5" />
           </div>
           <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-zinc-100">
-            Cal<span className="text-indigo-600 dark:text-indigo-400">Flow</span>
+            EL<span className="text-indigo-600 dark:text-indigo-400">VO</span>
           </span>
         </Link>
 

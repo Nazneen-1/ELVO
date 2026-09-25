@@ -17,7 +17,7 @@ const getApiBaseUrl = () => {
     return 'https://elvo.onrender.com/api';
   }
 
-  return 'http://localhost:5000/api';
+  return 'http://localhost:5002/api';
 };
 
 const api = axios.create({
@@ -30,7 +30,7 @@ const api = axios.create({
 // Request Interceptor: Attach JWT Token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('calflow_token');
+    const token = localStorage.getItem('elvo_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -45,7 +45,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       // Clear token if invalid or expired
-      localStorage.removeItem('calflow_token');
+      localStorage.removeItem('elvo_token');
       // If we are in the protected app area, redirect to login
       if (window.location.pathname.startsWith('/app')) {
         window.location.href = '/login';

@@ -54,7 +54,7 @@ export const MobileAgendaView = ({
           </div>
         ) : (
           tasks.map((task) => {
-            const isCompleted = task.status === 'completed';
+            const isCompleted = task.status === 'Done';
             return (
               <div
                 key={task._id}
@@ -68,9 +68,9 @@ export const MobileAgendaView = ({
                   <span
                     className={clsx(
                       'w-2 h-2 rounded-full shrink-0',
-                      task.status === 'completed'
+                      task.status === 'Done'
                         ? 'bg-emerald-500'
-                        : task.status === 'in_progress'
+                        : task.status === 'In Progress'
                         ? 'bg-amber-500'
                         : 'bg-indigo-500'
                     )}
