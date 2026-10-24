@@ -6,12 +6,16 @@ import { TaskFormModal } from '../components/tasks/TaskFormModal.jsx';
 import { TaskDetailDrawer } from '../components/tasks/TaskDetailDrawer.jsx';
 import { useCalendar } from '../hooks/useCalendar.js';
 import { useTasks } from '../context/TaskContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { toISODate } from '../utils/dateUtils.js';
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek } from 'date-fns';
 import { Sparkles, Briefcase } from 'lucide-react';
 
 export const CalendarPage = () => {
+  const { user } = useAuth();
+  const weekStartsOn = Number(user?.preferences?.firstDayOfWeek ?? 0);
+
   const {
     currentDate,
     selectedDate,
@@ -21,7 +25,7 @@ export const CalendarPage = () => {
     nextMonth,
     prevMonth,
     goToToday,
-  } = useCalendar();
+  } = useCalendar(new Date(), weekStartsOn);
 
   const {
     fetchTasks,
@@ -45,8 +49,8 @@ export const CalendarPage = () => {
   useEffect(() => {
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(monthStart);
-    const gridStart = startOfWeek(monthStart);
-    const gridEnd = endOfWeek(monthEnd);
+    const gridStart = startOfWeek(monthStart, { weekStartsOn });
+    const gridEnd = endOfWeek(monthEnd, { weekStartsOn });
 
     const params = {
       start: toISODate(gridStart),
@@ -61,7 +65,7 @@ export const CalendarPage = () => {
     }
 
     fetchTasks(params);
-  }, [currentDate, activeWorkspaceId, fetchTasks]);
+  }, [currentDate, activeWorkspaceId, fetchTasks, weekStartsOn]);
 
   // Handlers
   const handleOpenCreateModal = (date) => {
@@ -119,6 +123,7 @@ export const CalendarPage = () => {
         onSelectDate={setSelectedDate}
         onOpenCreateModal={handleOpenCreateModal}
         onSelectTask={handleSelectTask}
+        weekStartsOn={weekStartsOn}
       />
 
       {/* Mobile Agenda View (< 768px) */}

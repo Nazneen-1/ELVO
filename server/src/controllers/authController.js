@@ -145,7 +145,7 @@ export const getMe = async (req, res, next) => {
 // @access  Private
 export const updatePreferences = async (req, res, next) => {
   try {
-    const { theme, firstDayOfWeek } = req.body;
+    const { theme, firstDayOfWeek, defaultLandingView } = req.body;
 
     const user = await User.findById(req.user._id);
     if (!user) {
@@ -158,16 +158,27 @@ export const updatePreferences = async (req, res, next) => {
     if (theme && ['light', 'dark', 'system'].includes(theme)) {
       user.preferences.theme = theme;
     }
-    if (firstDayOfWeek !== undefined && [0, 1].includes(firstDayOfWeek)) {
-      user.preferences.firstDayOfWeek = firstDayOfWeek;
+    if (firstDayOfWeek !== undefined && [0, 1].includes(Number(firstDayOfWeek))) {
+      user.preferences.firstDayOfWeek = Number(firstDayOfWeek);
+    }
+    if (defaultLandingView && ['dashboard', 'calendar', 'tasks'].includes(defaultLandingView)) {
+      user.preferences.defaultLandingView = defaultLandingView;
     }
 
+    user.markModified('preferences');
     await user.save();
 
     return res.status(200).json({
       success: true,
       data: {
         preferences: user.preferences,
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          preferences: user.preferences,
+          createdAt: user.createdAt,
+        },
       },
     });
   } catch (error) {

@@ -35,6 +35,11 @@ const userSchema = new mongoose.Schema(
         enum: [0, 1], // 0 = Sunday, 1 = Monday
         default: 0,
       },
+      defaultLandingView: {
+        type: String,
+        enum: ['dashboard', 'calendar', 'tasks'],
+        default: 'dashboard',
+      },
     },
   },
   {

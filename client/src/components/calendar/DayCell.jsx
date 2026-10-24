@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { Plus } from 'lucide-react';
 import { TaskBadge } from './TaskBadge.jsx';
+import { useTasks } from '../../context/TaskContext.jsx';
+import { toISODate } from '../../utils/dateUtils.js';
 
 export const DayCell = ({
   day,
@@ -12,17 +14,73 @@ export const DayCell = ({
   onSelectTask,
 }) => {
   const { isCurrentMonth, isToday, dayNumber } = day;
+  const { patchTask } = useTasks();
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const visibleTasks = tasks.slice(0, 3);
   const overflowCount = tasks.length - 3;
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    try {
+      const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+
+      let taskId = raw;
+      let fromDate = null;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed?.taskId) {
+          taskId = parsed.taskId;
+          fromDate = parsed.startDate;
+        }
+      } catch {
+        // Plain string taskId fallback
+      }
+
+      // Avoid accidental duplicate update if dropped on same day
+      if (fromDate && toISODate(fromDate) === day.isoString) {
+        return;
+      }
+      if (tasks.some((t) => t._id === taskId)) {
+        return;
+      }
+
+      await patchTask(taskId, { startDate: day.isoString });
+    } catch (err) {
+      console.error('Failed to reschedule task:', err);
+    }
+  };
 
   return (
     <div
       onClick={() => onSelectDate(day.date)}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={clsx(
         'group relative min-h-[90px] sm:min-h-[110px] lg:min-h-[130px] p-2 border-b border-r border-slate-200/70 dark:border-zinc-800/70 transition-colors flex flex-col',
         !isCurrentMonth && 'bg-slate-50/50 dark:bg-zinc-950/40 text-slate-400 dark:text-zinc-600',
         isCurrentMonth && 'bg-white dark:bg-zinc-900/90 text-slate-800 dark:text-zinc-200 hover:bg-slate-50/80 dark:hover:bg-zinc-800/50',
-        isSelected && 'ring-2 ring-indigo-500 ring-inset bg-indigo-50/30 dark:bg-indigo-950/20'
+        isSelected && 'ring-2 ring-indigo-500 ring-inset bg-indigo-50/30 dark:bg-indigo-950/20',
+        isDragOver && 'ring-2 ring-indigo-500 ring-inset bg-indigo-50/70 dark:bg-indigo-950/60'
       )}
     >
       {/* Date Header inside Cell */}

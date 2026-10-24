@@ -18,6 +18,19 @@ import { WorkspacesPage } from './pages/WorkspacesPage.jsx';
 import { SettingsPage } from './pages/SettingsPage.jsx';
 import { NotFoundPage } from './pages/NotFoundPage.jsx';
 
+import { useAuth } from './context/AuthContext.jsx';
+
+function AppIndexRedirect() {
+  const { user } = useAuth();
+  const validViews = {
+    dashboard: '/app/dashboard',
+    calendar: '/app/calendar',
+    tasks: '/app/tasks',
+  };
+  const target = validViews[user?.preferences?.defaultLandingView] || '/app/dashboard';
+  return <Navigate to={target} replace />;
+}
+
 function AppLayout() {
   return (
     <ProtectedRoute>
@@ -44,7 +57,7 @@ function App() {
 
                   {/* Protected App Routes with AppShell layout */}
                   <Route path="/app" element={<AppLayout />}>
-                    <Route index element={<Navigate to="dashboard" replace />} />
+                    <Route index element={<AppIndexRedirect />} />
                     <Route path="dashboard" element={<DashboardPage />} />
                     <Route path="calendar" element={<CalendarPage />} />
                     <Route path="tasks" element={<TasksPage />} />

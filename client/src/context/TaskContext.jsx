@@ -14,7 +14,8 @@ export const TaskProvider = ({ children }) => {
   const [tasks, setTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
-  const [searchQuery, setSearchQuery] = useState(''); // new state for search
+  const [filterPriority, setFilterPriority] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -140,12 +141,23 @@ export const TaskProvider = ({ children }) => {
     }
   };
 
+  // Clear all filters
+  const clearFilters = useCallback(() => {
+    setFilterStatus('all');
+    setFilterPriority('all');
+    setSearchQuery('');
+  }, []);
+
   // Map tasks by ISO date string (yyyy-MM-dd) for fast grid rendering
   const tasksByDate = useMemo(() => {
     const map = {};
     tasks.forEach((task) => {
       // Apply status filter
       if (filterStatus !== 'all' && task.status !== filterStatus) {
+        return;
+      }
+      // Apply priority filter
+      if (filterPriority !== 'all' && task.priority !== filterPriority) {
         return;
       }
       // Apply search filter
@@ -165,7 +177,7 @@ export const TaskProvider = ({ children }) => {
       map[isoDate].push(task);
     });
     return map;
-  }, [tasks, filterStatus, searchQuery]);
+  }, [tasks, filterStatus, filterPriority, searchQuery]);
 
   return (
     <TaskContext.Provider
@@ -175,8 +187,11 @@ export const TaskProvider = ({ children }) => {
         isLoading,
         filterStatus,
         setFilterStatus,
+        filterPriority,
+        setFilterPriority,
         searchQuery,
         setSearchQuery,
+        clearFilters,
         fetchTasks,
         createTask,
         updateTask,

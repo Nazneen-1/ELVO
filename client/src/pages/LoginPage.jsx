@@ -39,7 +39,16 @@ export const LoginPage = () => {
     setIsSubmitting(false);
 
     if (result.success) {
-      navigate(from, { replace: true });
+      const fromPath = location.state?.from?.pathname;
+      const validViews = {
+        dashboard: '/app/dashboard',
+        calendar: '/app/calendar',
+        tasks: '/app/tasks',
+      };
+      const preferredLanding = result.user?.preferences?.defaultLandingView;
+      const defaultDest = validViews[preferredLanding] || '/app/dashboard';
+      const destination = (fromPath && fromPath !== '/login' && fromPath !== '/app') ? fromPath : defaultDest;
+      navigate(destination, { replace: true });
     } else {
       setErrorMessage(result.error || 'Failed to sign in.');
     }

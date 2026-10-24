@@ -3,7 +3,8 @@ import { DayCell } from './DayCell.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
 import { toISODate } from '../../utils/dateUtils.js';
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAYS_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAYS_MON = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export const MonthGrid = ({
   daysMatrix,
@@ -11,15 +12,17 @@ export const MonthGrid = ({
   onSelectDate,
   onOpenCreateModal,
   onSelectTask,
+  weekStartsOn = 0,
 }) => {
   const { tasksByDate } = useTasks();
   const selectedDateISO = toISODate(selectedDate);
+  const weekdays = Number(weekStartsOn) === 1 ? WEEKDAYS_MON : WEEKDAYS_SUN;
 
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200/80 dark:border-zinc-800/80 shadow-subtle overflow-hidden">
       {/* Weekday Names Header */}
       <div className="grid grid-cols-7 border-b border-slate-200/80 dark:border-zinc-800/80 bg-slate-50 dark:bg-zinc-950/60">
-        {WEEKDAYS.map((day, idx) => (
+        {weekdays.map((day) => (
           <div
             key={day}
             className="py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400"

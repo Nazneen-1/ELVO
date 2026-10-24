@@ -37,7 +37,13 @@ const STATUS_OPTIONS = [
   { id: 'Done', label: 'Done' },
 ];
 
-export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null }) => {
+export const TaskFormModal = ({
+  isOpen,
+  onClose,
+  initialDate,
+  editTask = null,
+  initialStatus = 'To Do',
+}) => {
   const { createTask, updateTask } = useTasks();
   const { workspaces, activeWorkspaceId } = useWorkspace();
 
@@ -49,7 +55,7 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
   const [endTime, setEndTime] = useState('');
   const [priority, setPriority] = useState('Medium');
   const [color, setColor] = useState('indigo');
-  const [status, setStatus] = useState('To Do');
+  const [status, setStatus] = useState(initialStatus || 'To Do');
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('personal');
   const [estimatedMinutes, setEstimatedMinutes] = useState(30);
 
@@ -72,10 +78,10 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (editTask) {
+    if (editTask && editTask._id) {
       setTitle(editTask.title || '');
       setDescription(editTask.description || '');
-      setStartDate(toISODate(editTask.startDate));
+      setStartDate(editTask.startDate ? toISODate(editTask.startDate) : toISODate(new Date()));
       setDueDate(editTask.dueDate ? toISODate(editTask.dueDate) : '');
       setStartTime(editTask.startTime || '');
       setEndTime(editTask.endTime || '');
@@ -98,7 +104,7 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
       setEndTime('');
       setPriority('Medium');
       setColor('indigo');
-      setStatus('To Do');
+      setStatus(initialStatus || 'To Do');
       setSelectedWorkspaceId(activeWorkspaceId || 'personal');
       setSubtasks([]);
       setTags([]);
@@ -108,7 +114,7 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
       setEstimatedMinutes(30);
     }
     setError('');
-  }, [isOpen, editTask, initialDate, activeWorkspaceId]);
+  }, [editTask, isOpen, initialDate, initialStatus, activeWorkspaceId]);
 
   const handleAddSubtask = () => {
     if (!newSubtaskTitle.trim()) return;
@@ -169,7 +175,7 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
     };
 
     let res;
-    if (editTask) {
+    if (editTask && editTask._id) {
       res = await updateTask(editTask._id, payload);
     } else {
       res = await createTask(payload);
@@ -188,7 +194,7 @@ export const TaskFormModal = ({ isOpen, onClose, initialDate, editTask = null })
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={editTask ? 'Edit Task' : 'Create New Task'}
+      title={editTask && editTask._id ? 'Edit Task' : 'Create New Task'}
       maxWidth="max-w-lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4 max-h-[80vh] overflow-y-auto pr-1">

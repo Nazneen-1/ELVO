@@ -69,7 +69,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('elvo_token', newToken);
         setToken(newToken);
         setUser(loggedInUser);
-        return { success: true };
+        return { success: true, user: loggedInUser };
       }
     } catch (err) {
       const message = err.response?.data?.message || 'Invalid email or password.';
@@ -87,6 +87,28 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  // Update user preferences
+  const updateUserPreferences = async (newPrefs) => {
+    try {
+      const response = await authService.updatePreferences(newPrefs);
+      if (response.success) {
+        const updatedPrefs = response.data?.preferences || response.data;
+        setUser((prev) => (prev ? {
+          ...prev,
+          preferences: {
+            ...prev.preferences,
+            ...updatedPrefs,
+          },
+        } : prev));
+        return { success: true, data: updatedPrefs };
+      }
+      return { success: false, error: response.message || 'Failed to update preferences' };
+    } catch (err) {
+      const message = err.response?.data?.message || err.message || 'Failed to update preferences';
+      return { success: false, error: message };
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -99,6 +121,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         setUser,
+        updateUserPreferences,
       }}
     >
       {children}

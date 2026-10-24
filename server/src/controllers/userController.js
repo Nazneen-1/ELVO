@@ -35,11 +35,17 @@ export const updateUserProfile = async (req, res, next) => {
       user.name = name.trim();
     }
 
-    if (preferences) {
-      user.preferences = {
-        ...user.preferences,
-        ...preferences,
-      };
+    if (preferences && typeof preferences === 'object') {
+      if (preferences.theme && ['light', 'dark', 'system'].includes(preferences.theme)) {
+        user.preferences.theme = preferences.theme;
+      }
+      if (preferences.firstDayOfWeek !== undefined && [0, 1].includes(Number(preferences.firstDayOfWeek))) {
+        user.preferences.firstDayOfWeek = Number(preferences.firstDayOfWeek);
+      }
+      if (preferences.defaultLandingView && ['dashboard', 'calendar', 'tasks'].includes(preferences.defaultLandingView)) {
+        user.preferences.defaultLandingView = preferences.defaultLandingView;
+      }
+      user.markModified('preferences');
     }
 
     await user.save();

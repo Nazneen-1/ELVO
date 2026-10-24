@@ -14,32 +14,91 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
+import { AlertCircle } from 'lucide-react';
+
 export const SettingsPage = () => {
-  const { user } = useAuth();
+  const { user, setUser, updateUserPreferences } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { tasks } = useTasks();
 
   const [name, setName] = useState(user?.name || '');
   const [firstDayOfWeek, setFirstDayOfWeek] = useState(user?.preferences?.firstDayOfWeek ?? 0);
-  const [defaultView, setDefaultView] = useState('calendar');
+  const [defaultView, setDefaultView] = useState(user?.preferences?.defaultLandingView || 'dashboard');
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [profileError, setProfileError] = useState('');
+
+  const [isSavingPrefs, setIsSavingPrefs] = useState(false);
+  const [prefSaveSuccess, setPrefSaveSuccess] = useState(false);
+  const [prefError, setPrefError] = useState('');
+
+  React.useEffect(() => {
+    if (user) {
+      setName(user.name || '');
+      setFirstDayOfWeek(user.preferences?.firstDayOfWeek ?? 0);
+      setDefaultView(user.preferences?.defaultLandingView || 'dashboard');
+    }
+  }, [user]);
+
+  const handleSavePreferences = async (overrides = {}) => {
+    setIsSavingPrefs(true);
+    setPrefError('');
+    setPrefSaveSuccess(false);
+
+    const payload = {
+      firstDayOfWeek: overrides.firstDayOfWeek !== undefined ? overrides.firstDayOfWeek : firstDayOfWeek,
+      defaultLandingView: overrides.defaultLandingView !== undefined ? overrides.defaultLandingView : defaultView,
+      theme,
+    };
+
+    try {
+      const res = await updateUserPreferences(payload);
+      if (res && res.success) {
+        setPrefSaveSuccess(true);
+        setTimeout(() => setPrefSaveSuccess(false), 3000);
+      } else {
+        setPrefError(res?.error || 'Failed to save preferences.');
+      }
+    } catch (err) {
+      setPrefError(err.message || 'An error occurred while saving preferences.');
+    } finally {
+      setIsSavingPrefs(false);
+    }
+  };
+
+  const handleFirstDayOfWeekChange = async (val) => {
+    setFirstDayOfWeek(val);
+    await handleSavePreferences({ firstDayOfWeek: val });
+  };
+
+  const handleDefaultViewChange = async (val) => {
+    setDefaultView(val);
+    await handleSavePreferences({ defaultLandingView: val });
+  };
 
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     setIsSaving(true);
+    setProfileError('');
+    setSaveSuccess(false);
     try {
-      await userService.updateUserProfile({
+      const response = await userService.updateUserProfile({
         name,
         preferences: {
           firstDayOfWeek,
           theme,
+          defaultLandingView: defaultView,
         },
       });
+      if (response && response.data) {
+        setUser(response.data);
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Failed to save profile changes.';
+      setProfileError(msg);
       console.error('Failed to save settings:', err);
     } finally {
       setIsSaving(false);
@@ -101,6 +160,12 @@ export const SettingsPage = () => {
         {saveSuccess && (
           <div className="p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-emerald-500/30 text-sm font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-2 shadow-sm">
             <Check className="w-5 h-5" /> Preferences saved successfully!
+          </div>
+        )}
+
+        {profileError && (
+          <div className="p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-rose-500/30 text-sm font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 shadow-sm">
+            <AlertCircle className="w-5 h-5" /> {profileError}
           </div>
         )}
 
@@ -236,6 +301,18 @@ export const SettingsPage = () => {
             </div>
           </div>
 
+          {prefSaveSuccess && (
+            <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2 shadow-sm">
+              <Check className="w-4 h-4" /> Calendar preferences saved successfully!
+            </div>
+          )}
+
+          {prefError && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2 shadow-sm">
+              <AlertCircle className="w-4 h-4" /> {prefError}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="space-y-1.5">
               <label className="block text-[10px] font-bold uppercase tracking-[0.15em] text-[#565656] dark:text-[#848484]">
@@ -243,7 +320,7 @@ export const SettingsPage = () => {
               </label>
               <select
                 value={firstDayOfWeek}
-                onChange={(e) => setFirstDayOfWeek(Number(e.target.value))}
+                onChange={(e) => handleFirstDayOfWeekChange(Number(e.target.value))}
                 className="w-full px-4 py-3 rounded-xl bg-white/40 dark:bg-black/20 border border-white/60 dark:border-[#3A3A3A] text-sm text-[#2B2B2B] dark:text-white focus:outline-none focus:border-[#565656] transition-colors appearance-none"
               >
                 <option value={0}>Sunday</option>
@@ -257,7 +334,7 @@ export const SettingsPage = () => {
               </label>
               <select
                 value={defaultView}
-                onChange={(e) => setDefaultView(e.target.value)}
+                onChange={(e) => handleDefaultViewChange(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-white/40 dark:bg-black/20 border border-white/60 dark:border-[#3A3A3A] text-sm text-[#2B2B2B] dark:text-white focus:outline-none focus:border-[#565656] transition-colors appearance-none"
               >
                 <option value="dashboard">Dashboard Overview</option>
@@ -265,6 +342,22 @@ export const SettingsPage = () => {
                 <option value="tasks">Tasks & Kanban</option>
               </select>
             </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-6 pt-4 border-t border-black/5 dark:border-white/5">
+            <span className="text-[11px] text-[#565656] dark:text-[#848484]">
+              {isSavingPrefs ? 'Saving preferences...' : 'Preferences are automatically saved on change.'}
+            </span>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              isLoading={isSavingPrefs}
+              onClick={() => handleSavePreferences()}
+              className="w-full sm:w-auto rounded-xl px-4 py-2 text-xs shadow-md"
+            >
+              Save Calendar Preferences
+            </Button>
           </div>
         </div>
 

@@ -24,18 +24,31 @@ export const TaskBadge = ({ task, onClick }) => {
 
   const currentStyle = colorStyles[task.color] || colorStyles.indigo;
 
+  const handleDragStart = (e) => {
+    e.stopPropagation();
+    const payload = JSON.stringify({
+      taskId: task._id,
+      startDate: task.startDate,
+    });
+    e.dataTransfer.setData('application/json', payload);
+    e.dataTransfer.setData('text/plain', task._id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
   return (
     <div
+      draggable
+      onDragStart={handleDragStart}
       onClick={(e) => {
         e.stopPropagation();
         onClick(task);
       }}
       className={clsx(
-        'group flex items-center justify-between px-2 py-1 mb-1 rounded-lg border text-xs font-medium cursor-pointer transition-all duration-150 shadow-subtle',
+        'group flex items-center justify-between px-2 py-1 mb-1 rounded-lg border text-xs font-medium cursor-grab active:cursor-grabbing transition-all duration-150 shadow-subtle select-none',
         currentStyle,
         isCompleted && 'opacity-60 line-through'
       )}
-      title={`${task.title} ${task.startTime ? `(${formatDisplayTime(task.startTime)})` : ''}`}
+      title={`${task.title} ${task.startTime ? `(${formatDisplayTime(task.startTime)})` : ''} - Drag to reschedule`}
     >
       <div className="flex items-center gap-1.5 min-w-0">
         {/* Status Dot */}
