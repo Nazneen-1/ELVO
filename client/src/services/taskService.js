@@ -54,5 +54,25 @@ export const taskService = {
     const response = await api.delete(`/tasks/${id}`);
     return response.data;
   },
+
+  // Update or skip an occurrence of a recurring task
+  updateOccurrence: async (id, date, { action, status, overrides } = {}) => {
+    const response = await api.post(`/tasks/${id}/occurrences`, {
+      date,
+      action,
+      status,
+      overrides,
+    });
+    return response.data;
+  },
+
+  // Skip a specific occurrence
+  skipOccurrence: async (id, date) => {
+    const response = await api.post(`/tasks/${id}/occurrences`, {
+      date,
+      action: 'skip',
+    });
+    return response.data;
+  },
 };
 

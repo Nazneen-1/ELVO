@@ -141,6 +141,82 @@ export const TaskProvider = ({ children }) => {
     }
   };
 
+  // Update a single occurrence of a recurring task (complete, reopen, or skip)
+  const updateOccurrence = async (masterTaskId, occurrenceDate, { action, status, overrides } = {}) => {
+    try {
+      const response = await taskService.updateOccurrence(masterTaskId, occurrenceDate, {
+        action,
+        status,
+        overrides,
+      });
+
+      if (response.success) {
+        const occId = `${masterTaskId}__${occurrenceDate}`;
+        const targetAction = response.occurrence?.action || action;
+        const targetStatus =
+          response.occurrence?.status ||
+          status ||
+          (targetAction === 'completed' ? 'Done' : 'To Do');
+
+        if (targetAction === 'skipped') {
+          // Remove only this occurrence from the calendar state
+          setTasks((prev) =>
+            prev.filter((t) => t.occurrenceId !== occId && !(t.masterTaskId === masterTaskId && t.occurrenceDate === occurrenceDate))
+          );
+          if (
+            selectedTask &&
+            (selectedTask.occurrenceId === occId ||
+              (selectedTask.masterTaskId === masterTaskId && selectedTask.occurrenceDate === occurrenceDate))
+          ) {
+            setSelectedTask(null);
+            setIsDetailOpen(false);
+          }
+        } else {
+          // Update status of this occurrence in the task list
+          setTasks((prev) =>
+            prev.map((t) => {
+              if (
+                t.occurrenceId === occId ||
+                (t.masterTaskId === masterTaskId && t.occurrenceDate === occurrenceDate)
+              ) {
+                return { ...t, status: targetStatus };
+              }
+              // Also sync master task document if present
+              if (t._id === masterTaskId && !t.isOccurrence) {
+                return response.data;
+              }
+              return t;
+            })
+          );
+          if (
+            selectedTask &&
+            (selectedTask.occurrenceId === occId ||
+              (selectedTask.masterTaskId === masterTaskId && selectedTask.occurrenceDate === occurrenceDate))
+          ) {
+            setSelectedTask((prev) => ({
+              ...prev,
+              status: targetStatus,
+              recurrenceExceptions: response.data.recurrenceExceptions,
+            }));
+          }
+        }
+        return { success: true, data: response.data, occurrence: response.occurrence };
+      }
+      return { success: false, error: 'Failed to update occurrence' };
+    } catch (error) {
+      console.error('Failed to update occurrence:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to update occurrence',
+      };
+    }
+  };
+
+  // Skip a specific occurrence
+  const skipOccurrence = async (masterTaskId, occurrenceDate) => {
+    return updateOccurrence(masterTaskId, occurrenceDate, { action: 'skip' });
+  };
+
   // Clear all filters
   const clearFilters = useCallback(() => {
     setFilterStatus('all');
@@ -212,6 +288,8 @@ export const TaskProvider = ({ children }) => {
           }
         },
         deleteTask,
+        updateOccurrence,
+        skipOccurrence,
         addComment,
         toggleSubtask,
         selectedTask,

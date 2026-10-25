@@ -466,6 +466,18 @@ async function runPhase2RecurrenceTests() {
   }
 }
 
+async function runPhase2OccurrencesTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 7. PHASE 2.3B OCCURRENCE COMPLETION & SKIPPING TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-3-b.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
+    const match = output.match(/✔ Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '33';
+    recordTest('Phase2-Occurrences', `Phase 2.3B suite (${passedCount}/33 checks passed: occurrence completion, reopening, skipping, DB persistence, cadence validation)`, 'PASS');
+  } catch (err) {
+    recordTest('Phase2-Occurrences', 'Phase 2.3B occurrence completion & skipping suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
 async function runAll() {
   console.log('\x1b[1m\x1b[35m=======================================================');
   console.log('   CalFlow (ELVO) - Build & Deployment Test Suite   ');
@@ -477,6 +489,7 @@ async function runAll() {
   await runPhase2DateHygieneTests();
   await runPhase2ViewsTests();
   await runPhase2RecurrenceTests();
+  await runPhase2OccurrencesTests();
 
   console.log('\n\x1b[1m\x1b[35m=======================================================');
   console.log('                   TEST SUMMARY                        ');

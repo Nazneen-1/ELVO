@@ -23,6 +23,7 @@ import {
   Bell,
   Timer,
   Users,
+  CalendarX,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -32,15 +33,21 @@ export const TaskDetailDrawer = ({
   onClose,
   onEdit,
 }) => {
-  const { updateTask, deleteTask, toggleSubtask, addComment } = useTasks();
+  const { updateTask, deleteTask, updateOccurrence, skipOccurrence, toggleSubtask, addComment } = useTasks();
   const { user } = useAuth();
   const [isDeleting, setIsDeleting] = useState(false);
   const [isStatusUpdating, setIsStatusUpdating] = useState(false);
+  const [isOccurrenceUpdating, setIsOccurrenceUpdating] = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isPostingComment, setIsPostingComment] = useState(false);
   const [activeTab, setActiveTab] = useState('details'); // 'details' | 'comments' | 'activity'
 
   if (!task) return null;
+
+  const isOccurrence = Boolean(task.isOccurrence && (task.occurrenceDate || task.occurrenceId));
+  const occurrenceDate = task.occurrenceDate || (task.occurrenceId ? task.occurrenceId.split('__')[1] : null);
+  const masterTaskId = task.masterTaskId || task._id;
 
   const STATUS_ORDER = ['To Do', 'In Progress', 'Done'];
   const handleToggleStatus = async () => {
@@ -51,13 +58,44 @@ export const TaskDetailDrawer = ({
     setIsStatusUpdating(false);
   };
 
-  const handleDelete = async () => {
-    if (window.confirm('Are you sure you want to delete this task?')) {
-      setIsDeleting(true);
-      await deleteTask(task._id);
-      setIsDeleting(false);
+  const handleToggleOccurrenceStatus = async () => {
+    if (!isOccurrence || !occurrenceDate) return;
+    setIsOccurrenceUpdating(true);
+    const targetAction = task.status === 'Done' ? 'reopen' : 'complete';
+    await updateOccurrence(masterTaskId, occurrenceDate, { action: targetAction });
+    setIsOccurrenceUpdating(false);
+  };
+
+  const handleSkipOccurrence = async () => {
+    if (!isOccurrence || !occurrenceDate) return;
+    if (
+      window.confirm(
+        `Skip the occurrence on ${occurrenceDate}? It will be removed from your calendar without affecting the rest of the series.`
+      )
+    ) {
+      setIsSkipping(true);
+      await skipOccurrence(masterTaskId, occurrenceDate);
+      setIsSkipping(false);
       onClose();
     }
+  };
+
+  const handleDelete = async () => {
+    if (isOccurrence) {
+      const confirmDelete = window.confirm(
+        `This is an individual occurrence on ${occurrenceDate}.\n\n` +
+          `• To remove ONLY this date, click Cancel and use "Skip Occurrence" instead.\n` +
+          `• To permanently delete the ENTIRE recurring series, click OK.`
+      );
+      if (!confirmDelete) return;
+    } else {
+      if (!window.confirm('Are you sure you want to delete this task?')) return;
+    }
+
+    setIsDeleting(true);
+    await deleteTask(masterTaskId);
+    setIsDeleting(false);
+    onClose();
   };
 
   const handlePostComment = async (e) => {
@@ -108,11 +146,18 @@ export const TaskDetailDrawer = ({
                 <AlertCircle className="w-3 h-3" /> Overdue
               </span>
             )}
-            {task.recurrence?.frequency && task.recurrence.frequency !== 'none' && (
+            {isOccurrence ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-800">
+                <Repeat className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                <span>
+                  {task.recurrence?.frequency} ({occurrenceDate})
+                </span>
+              </span>
+            ) : task.recurrence?.frequency && task.recurrence.frequency !== 'none' ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
                 <Repeat className="w-3 h-3" /> {task.recurrence.frequency}
               </span>
-            )}
+            ) : null}
             {task.reminder?.enabled && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
                 <Bell className="w-3 h-3" /> 15m reminder
@@ -275,23 +320,59 @@ export const TaskDetailDrawer = ({
               </div>
             )}
 
-            {/* Status Quick-Cycle Button */}
-            <div>
-              <Button
-                variant="secondary"
-                className="w-full justify-between"
-                onClick={handleToggleStatus}
-                isLoading={isStatusUpdating}
-              >
-                <span className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Cycle Status</span>
-                </span>
-                <span className="text-xs font-semibold capitalize opacity-80">
-                  {task.status} → {STATUS_ORDER[(STATUS_ORDER.indexOf(task.status) + 1) % STATUS_ORDER.length]}
-                </span>
-              </Button>
-            </div>
+            {/* Status Section */}
+            {isOccurrence ? (
+              <div className="space-y-2.5">
+                <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-purple-950/40 border border-purple-200/60 dark:border-purple-800/40 text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-purple-900 dark:text-purple-200 mb-1">
+                    <Repeat className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                    <span>Occurrence Action ({occurrenceDate})</span>
+                  </div>
+                  <p className="text-[11px] text-purple-700 dark:text-purple-300 leading-relaxed">
+                    Completing, reopening, or skipping applies exclusively to this occurrence date. The rest of the recurring series remains unchanged.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Button
+                    variant={task.status === 'Done' ? 'secondary' : 'primary'}
+                    className="w-full justify-center"
+                    onClick={handleToggleOccurrenceStatus}
+                    isLoading={isOccurrenceUpdating}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                    {task.status === 'Done' ? 'Mark as To Do' : 'Mark as Done'}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center text-slate-700 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-400 border-slate-200 dark:border-zinc-700"
+                    onClick={handleSkipOccurrence}
+                    isLoading={isSkipping}
+                  >
+                    <CalendarX className="w-4 h-4 mr-1.5 text-rose-500" />
+                    Skip Occurrence
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <Button
+                  variant="secondary"
+                  className="w-full justify-between"
+                  onClick={handleToggleStatus}
+                  isLoading={isStatusUpdating}
+                >
+                  <span className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>Cycle Status</span>
+                  </span>
+                  <span className="text-xs font-semibold capitalize opacity-80">
+                    {task.status} → {STATUS_ORDER[(STATUS_ORDER.indexOf(task.status) + 1) % STATUS_ORDER.length]}
+                  </span>
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

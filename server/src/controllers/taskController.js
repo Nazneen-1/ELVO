@@ -1,6 +1,11 @@
+import mongoose from 'mongoose';
 import Task from '../models/Task.js';
 import Workspace from '../models/Workspace.js';
-import { expandTasksForWindow } from '../utils/recurrenceEngine.js';
+import {
+  expandTasksForWindow,
+  generateOccurrenceDates,
+  daysInMonth,
+} from '../utils/recurrenceEngine.js';
 
 // Helper to check user access to a workspace
 const verifyWorkspaceAccess = async (workspaceId, userId) => {
@@ -800,6 +805,183 @@ export const deleteTask = async (req, res, next) => {
       message: 'Task successfully deleted',
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update or skip an individual occurrence of a recurring task
+// @route   POST /api/tasks/:id/occurrences
+// @route   POST /api/tasks/:id/occurrences/:date
+// @access  Private
+export const updateTaskOccurrence = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const occurrenceDate = req.params.date || req.body.date;
+    const { action, status, overrides } = req.body;
+
+    // 1. Validate master task ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid task ID',
+      });
+    }
+
+    // 2. Validate occurrence date string format (YYYY-MM-DD)
+    if (!occurrenceDate || typeof occurrenceDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid occurrence date in YYYY-MM-DD format is required',
+      });
+    }
+
+    // Validate calendar date sanity (month 1-12, days in month)
+    const [y, m, d] = occurrenceDate.split('-').map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid calendar date',
+      });
+    }
+
+    // 3. Find the master task
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found',
+      });
+    }
+
+    // 4. Enforce user & workspace ownership / permissions
+    const isOwner = task.userId && task.userId.toString() === req.user._id.toString();
+    const isAssigned = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
+    let hasAccess = isOwner || isAssigned;
+
+    if (!hasAccess && task.workspaceId) {
+      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to this task',
+      });
+    }
+
+    // 5. Verify the task is a recurring series
+    if (!task.recurrence || !task.recurrence.frequency || task.recurrence.frequency === 'none') {
+      return res.status(400).json({
+        success: false,
+        message: 'Task is not a recurring series',
+      });
+    }
+
+    // 6. Verify date is within the series range
+    const seriesStart = toCalendarDateString(task.startDate);
+    if (occurrenceDate < seriesStart) {
+      return res.status(400).json({
+        success: false,
+        message: 'Occurrence date is earlier than series start date',
+      });
+    }
+    if (task.recurrence.until) {
+      const seriesUntil = toCalendarDateString(task.recurrence.until);
+      if (seriesUntil && occurrenceDate > seriesUntil) {
+        return res.status(400).json({
+          success: false,
+          message: 'Occurrence date is after recurrence end date',
+        });
+      }
+    }
+
+    // 7. Verify the occurrence actually belongs to the series
+    const matchingOccurrences = generateOccurrenceDates({
+      startDate: task.startDate,
+      frequency: task.recurrence.frequency,
+      interval: task.recurrence.interval || 1,
+      windowStart: occurrenceDate,
+      windowEnd: occurrenceDate,
+      until: task.recurrence.until,
+    });
+    if (!matchingOccurrences.includes(occurrenceDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date does not belong to this recurrence series',
+      });
+    }
+
+    // 8. Determine target action and status
+    let targetAction = 'completed';
+    let targetStatus = 'Done';
+
+    const normalizedAct = (action || '').toLowerCase().trim();
+    if (['skip', 'skipped', 'cancel', 'cancelled'].includes(normalizedAct)) {
+      targetAction = 'skipped';
+      targetStatus = 'Done';
+    } else if (['reopen', 'reopened', 'todo'].includes(normalizedAct)) {
+      targetAction = 'modified';
+      targetStatus = 'To Do';
+    } else if (['complete', 'completed'].includes(normalizedAct)) {
+      targetAction = 'completed';
+      targetStatus = 'Done';
+    } else if (status && ['To Do', 'In Progress', 'Done'].includes(status)) {
+      targetStatus = status;
+      targetAction = status === 'Done' ? 'completed' : 'modified';
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Supported actions: 'complete', 'reopen', 'skip'",
+      });
+    }
+
+    // 9. Upsert exception for this date (preventing duplicates)
+    if (!task.recurrenceExceptions) {
+      task.recurrenceExceptions = [];
+    }
+
+    const exIndex = task.recurrenceExceptions.findIndex((ex) => ex.date === occurrenceDate);
+    if (exIndex >= 0) {
+      task.recurrenceExceptions[exIndex].action = targetAction;
+      task.recurrenceExceptions[exIndex].status = targetStatus;
+      if (overrides && typeof overrides === 'object') {
+        task.recurrenceExceptions[exIndex].overrides = {
+          ...(task.recurrenceExceptions[exIndex].overrides || {}),
+          ...overrides,
+        };
+      }
+    } else {
+      task.recurrenceExceptions.push({
+        date: occurrenceDate,
+        action: targetAction,
+        status: targetStatus,
+        overrides: overrides && typeof overrides === 'object' ? overrides : {},
+      });
+    }
+
+    // 10. Record activity without changing master task status
+    if (!task.activity) task.activity = [];
+    task.activity.push({
+      action: `Occurrence ${targetAction}`,
+      details: `Occurrence on ${occurrenceDate} marked as ${targetAction === 'skipped' ? 'skipped' : targetStatus} by ${req.user?.name || 'User'}`,
+      timestamp: new Date(),
+    });
+
+    await task.save();
+
+    return res.status(200).json({
+      success: true,
+      data: task,
+      occurrence: {
+        occurrenceId: `${task._id}__${occurrenceDate}`,
+        occurrenceDate,
+        masterTaskId: task._id.toString(),
+        action: targetAction,
+        status: targetStatus,
+      },
+    });
+  } catch (error) {
+    console.error('Update Task Occurrence Error:', error);
     next(error);
   }
 };
