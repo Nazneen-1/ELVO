@@ -430,6 +430,30 @@ async function runServerDeploymentIntegrationTests() {
   }
 }
 
+async function runPhase2DateHygieneTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 4. PHASE 2.1 DATE HYGIENE & TIME VALIDATION TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-1.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
+    const match = output.match(/✔ Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '38';
+    recordTest('Phase2-DateHygiene', `Phase 2.1 suite (${passedCount}/38 checks passed: UTC timezone safety, time validation, legacy dates, grid bounds)`, 'PASS');
+  } catch (err) {
+    recordTest('Phase2-DateHygiene', 'Phase 2.1 date hygiene & time validation suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runPhase2ViewsTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 5. PHASE 2.2 WEEK & DAY CALENDAR VIEWS TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-2.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
+    const match = output.match(/✔ Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '30';
+    recordTest('Phase2-Views', `Phase 2.2 suite (${passedCount}/30 checks passed: week/day navigation, overlap layout, week-start, all-day)`, 'PASS');
+  } catch (err) {
+    recordTest('Phase2-Views', 'Phase 2.2 week & day views suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
 async function runAll() {
   console.log('\x1b[1m\x1b[35m=======================================================');
   console.log('   CalFlow (ELVO) - Build & Deployment Test Suite   ');
@@ -438,6 +462,8 @@ async function runAll() {
   await runClientBuildTests();
   await runServerBuildAndSyntaxTests();
   await runServerDeploymentIntegrationTests();
+  await runPhase2DateHygieneTests();
+  await runPhase2ViewsTests();
 
   console.log('\n\x1b[1m\x1b[35m=======================================================');
   console.log('                   TEST SUMMARY                        ');

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarHeader } from '../components/calendar/CalendarHeader.jsx';
 import { MonthGrid } from '../components/calendar/MonthGrid.jsx';
+import { WeekView } from '../components/calendar/WeekView.jsx';
+import { DayView } from '../components/calendar/DayView.jsx';
 import { MobileAgendaView } from '../components/calendar/MobileAgendaView.jsx';
 import { TaskFormModal } from '../components/tasks/TaskFormModal.jsx';
 import { TaskDetailDrawer } from '../components/tasks/TaskDetailDrawer.jsx';
@@ -20,12 +22,16 @@ export const CalendarPage = () => {
     currentDate,
     selectedDate,
     setSelectedDate,
+    viewMode,
+    setViewMode,
     daysMatrix,
+    weekDays,
+    viewLabel,
     monthLabel,
-    nextMonth,
-    prevMonth,
+    next,
+    prev,
     goToToday,
-  } = useCalendar(new Date(), weekStartsOn);
+  } = useCalendar(new Date(), weekStartsOn, 'month');
 
   const {
     fetchTasks,
@@ -41,20 +47,28 @@ export const CalendarPage = () => {
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
 
   const [modalDate, setModalDate] = useState(new Date());
+  const [modalStartTime, setModalStartTime] = useState('');
   const [taskToEdit, setTaskToEdit] = useState(null);
 
   const isPersonal = activeWorkspaceId === 'personal';
 
-  // Fetch tasks whenever the calendar month or active workspace changes
+  // Fetch tasks whenever the active date, workspace, or weekStartsOn changes
   useEffect(() => {
+    // Determine the broadest date window needed so all visible slots are loaded
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(monthStart);
     const gridStart = startOfWeek(monthStart, { weekStartsOn });
     const gridEnd = endOfWeek(monthEnd, { weekStartsOn });
 
+    const weekStart = startOfWeek(currentDate, { weekStartsOn });
+    const weekEnd = endOfWeek(currentDate, { weekStartsOn });
+
+    const fetchStart = weekStart < gridStart ? weekStart : gridStart;
+    const fetchEnd = weekEnd > gridEnd ? weekEnd : gridEnd;
+
     const params = {
-      start: toISODate(gridStart),
-      end: toISODate(gridEnd),
+      start: toISODate(fetchStart),
+      end: toISODate(fetchEnd),
     };
 
     // Filter tasks by workspace context
@@ -65,12 +79,13 @@ export const CalendarPage = () => {
     }
 
     fetchTasks(params);
-  }, [currentDate, activeWorkspaceId, fetchTasks, weekStartsOn]);
+  }, [currentDate, activeWorkspaceId, fetchTasks, weekStartsOn, viewMode]);
 
   // Handlers
-  const handleOpenCreateModal = (date) => {
+  const handleOpenCreateModal = (date, initialStartTime = '') => {
     setTaskToEdit(null);
     setModalDate(date || selectedDate);
+    setModalStartTime(initialStartTime || '');
     setIsFormOpen(true);
   };
 
@@ -82,6 +97,7 @@ export const CalendarPage = () => {
   const handleEditTask = (task) => {
     setTaskToEdit(task);
     setModalDate(task.startDate);
+    setModalStartTime(task.startTime || '');
     setIsFormOpen(true);
   };
 
@@ -107,32 +123,57 @@ export const CalendarPage = () => {
         )}
       </div>
 
-      {/* Calendar Controls */}
+      {/* Calendar Controls (Header, View Mode Switcher, Search & Status Filters) */}
       <CalendarHeader
+        viewLabel={viewLabel}
         monthLabel={monthLabel}
-        onPrevMonth={prevMonth}
-        onNextMonth={nextMonth}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        onPrev={prev}
+        onNext={next}
         onToday={goToToday}
         onNewTask={() => handleOpenCreateModal(new Date())}
       />
 
-      {/* Monthly Grid (hidden on smallest screens to prioritize agenda) */}
-      <MonthGrid
-        daysMatrix={daysMatrix}
-        selectedDate={selectedDate}
-        onSelectDate={setSelectedDate}
-        onOpenCreateModal={handleOpenCreateModal}
-        onSelectTask={handleSelectTask}
-        weekStartsOn={weekStartsOn}
-      />
+      {/* Active Calendar View */}
+      {viewMode === 'month' && (
+        <>
+          <MonthGrid
+            daysMatrix={daysMatrix}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            onOpenCreateModal={handleOpenCreateModal}
+            onSelectTask={handleSelectTask}
+            weekStartsOn={weekStartsOn}
+          />
 
-      {/* Mobile Agenda View (< 768px) */}
-      <MobileAgendaView
-        selectedDate={selectedDate}
-        tasks={selectedDateTasks}
-        onOpenCreateModal={handleOpenCreateModal}
-        onSelectTask={handleSelectTask}
-      />
+          {/* Mobile Agenda View (< 768px for Month view) */}
+          <MobileAgendaView
+            selectedDate={selectedDate}
+            tasks={selectedDateTasks}
+            onOpenCreateModal={handleOpenCreateModal}
+            onSelectTask={handleSelectTask}
+          />
+        </>
+      )}
+
+      {viewMode === 'week' && (
+        <WeekView
+          weekDays={weekDays}
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+          onOpenCreateModal={handleOpenCreateModal}
+          onSelectTask={handleSelectTask}
+        />
+      )}
+
+      {viewMode === 'day' && (
+        <DayView
+          currentDate={currentDate}
+          onOpenCreateModal={handleOpenCreateModal}
+          onSelectTask={handleSelectTask}
+        />
+      )}
 
       {/* Task Create / Edit Modal */}
       <TaskFormModal
@@ -140,8 +181,10 @@ export const CalendarPage = () => {
         onClose={() => {
           setIsFormOpen(false);
           setTaskToEdit(null);
+          setModalStartTime('');
         }}
         initialDate={modalDate}
+        initialStartTime={modalStartTime}
         editTask={taskToEdit}
       />
 

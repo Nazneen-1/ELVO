@@ -17,6 +17,74 @@ const parseDateOrNull = (val) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+/**
+ * Parse a YYYY-MM-DD string as a UTC calendar date (midnight UTC).
+ * This is the canonical serialisation used when clients send date-only fields.
+ */
+export const parseDateOnlyUTC = (val) => {
+  if (!val || typeof val !== 'string') return parseDateOrNull(val);
+  // If it's already a plain date string, parse as UTC midnight
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    const d = new Date(`${val}T00:00:00.000Z`);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return parseDateOrNull(val);
+};
+
+/**
+ * Compare two HH:mm time strings.
+ * Returns a negative number if a < b, 0 if equal, positive if a > b.
+ */
+export const compareTime = (a, b) => {
+  const [ah, am] = a.split(':').map(Number);
+  const [bh, bm] = b.split(':').map(Number);
+  return ah * 60 + am - (bh * 60 + bm);
+};
+
+/**
+ * Extract a YYYY-MM-DD calendar date string from a Date object or ISO string.
+ * Returns null if absent or invalid.
+ */
+export const toCalendarDateString = (val) => {
+  if (!val) return null;
+  if (typeof val === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(val)) return val.slice(0, 10);
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString().slice(0, 10);
+  }
+  return null;
+};
+
+/**
+ * Validate date/time combinations and return an error message, or null if valid.
+ * - endDate must be >= startDate when both are present.
+ * - dueDate must be >= startDate when both are present.
+ * - When both startTime and endTime are provided and the task is single-day
+ *   (endDate equals startDate or endDate is absent), endTime must be > startTime.
+ */
+export const validateDateTimes = ({ startDate, endDate, dueDate, startTime, endTime }) => {
+  const startDay = toCalendarDateString(startDate);
+  const endDay = toCalendarDateString(endDate);
+  const dueDay = toCalendarDateString(dueDate);
+
+  if (startDay && endDay && endDay < startDay) {
+    return 'End date cannot be earlier than start date.';
+  }
+  if (startDay && dueDay && dueDay < startDay) {
+    return 'Due date cannot be earlier than start date.';
+  }
+  if (startTime && endTime) {
+    // Only enforce ordering when the event is on a single calendar day
+    const isSingleDay = !endDay || endDay === startDay;
+    if (isSingleDay && compareTime(endTime, startTime) <= 0) {
+      return 'End time must be later than start time.';
+    }
+  }
+  return null;
+};
+
 // @desc    Get all tasks for current user with optional date range, status, priority, search, and workspace filters
 // @route   GET /api/tasks
 // @access  Private
@@ -41,14 +109,20 @@ export const getTasks = async (req, res, next) => {
       query.$or = [{ userId: req.user._id }, { assignedTo: req.user._id }];
     }
 
-    // Filter by date range if provided
+    // Filter by date range if provided.
+    // Both start and end are sent as YYYY-MM-DD strings from the frontend.
+    // Parse as UTC midnight so the boundary is consistent regardless of server timezone.
+    // The upper bound extends to 23:59:59.999Z to include all tasks on the end date.
     if (start || end) {
       query.startDate = {};
       if (start) {
-        query.startDate.$gte = new Date(start);
+        query.startDate.$gte = parseDateOnlyUTC(start);
       }
       if (end) {
-        query.startDate.$lte = new Date(end);
+        const endDay = parseDateOnlyUTC(end);
+        // Extend to end-of-day so tasks stored at UTC midnight on the last grid day are included
+        const endOfDay = endDay ? new Date(endDay.getTime() + 24 * 60 * 60 * 1000 - 1) : null;
+        if (endOfDay) query.startDate.$lte = endOfDay;
       }
     }
 
@@ -315,9 +389,22 @@ export const createTask = async (req, res, next) => {
       });
     }
 
-    const parsedStart = parseDateOrNull(startDate) || new Date();
-    const parsedEnd = parseDateOrNull(endDate) || parsedStart;
-    const parsedDue = parseDateOrNull(dueDate);
+    const parsedStart = parseDateOnlyUTC(startDate) || new Date();
+    // endDate defaults to startDate when not provided (single-day task)
+    const parsedEnd = endDate ? parseDateOnlyUTC(endDate) : null;
+    const parsedDue = parseDateOnlyUTC(dueDate);
+
+    // Server-side validation (authoritative safeguard)
+    const validationError = validateDateTimes({
+      startDate: parsedStart,
+      endDate: parsedEnd,
+      dueDate: parsedDue,
+      startTime: startTime || null,
+      endTime: endTime || null,
+    });
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
+    }
 
     const task = await Task.create({
       userId: req.user._id,
@@ -330,7 +417,7 @@ export const createTask = async (req, res, next) => {
       dueDate: parsedDue,
       startTime: startTime || null,
       endTime: endTime || null,
-      isAllDay: isAllDay !== undefined ? isAllDay : !startTime,
+      isAllDay: isAllDay !== undefined ? Boolean(isAllDay) : Boolean(!startTime && !endTime),
       status: status || 'To Do',
       priority: priority || 'Medium',
       color: color || 'indigo',
@@ -401,10 +488,10 @@ export const updateTask = async (req, res, next) => {
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
         if (field === 'startDate') {
-          const parsed = parseDateOrNull(req.body[field]);
+          const parsed = parseDateOnlyUTC(req.body[field]);
           if (parsed) task.startDate = parsed;
         } else if (field === 'endDate' || field === 'dueDate') {
-          task[field] = parseDateOrNull(req.body[field]);
+          task[field] = parseDateOnlyUTC(req.body[field]);
         } else if (field === 'workspaceId' || field === 'assignedTo') {
           task[field] = (req.body[field] && req.body[field] !== 'personal') ? req.body[field] : null;
         } else {
@@ -412,6 +499,18 @@ export const updateTask = async (req, res, next) => {
         }
       }
     });
+
+    // Validate the (possibly updated) date/time combination
+    const updateValidationError = validateDateTimes({
+      startDate: task.startDate,
+      endDate: task.endDate,
+      dueDate: task.dueDate,
+      startTime: task.startTime,
+      endTime: task.endTime,
+    });
+    if (updateValidationError) {
+      return res.status(400).json({ success: false, message: updateValidationError });
+    }
 
     if (req.body.status && req.body.status !== prevStatus) {
       if (!task.activity) task.activity = [];
@@ -465,6 +564,9 @@ export const patchTask = async (req, res, next) => {
       'startDate',
       'endDate',
       'dueDate',
+      'startTime',
+      'endTime',
+      'isAllDay',
     ];
 
     let updated = false;
@@ -472,10 +574,10 @@ export const patchTask = async (req, res, next) => {
     patchableFields.forEach((field) => {
       if (req.body[field] !== undefined) {
         if (field === 'startDate') {
-          const parsed = parseDateOrNull(req.body[field]);
+          const parsed = parseDateOnlyUTC(req.body[field]);
           if (parsed) task.startDate = parsed;
         } else if (field === 'endDate' || field === 'dueDate') {
-          task[field] = parseDateOrNull(req.body[field]);
+          task[field] = parseDateOnlyUTC(req.body[field]);
         } else {
           task[field] = req.body[field];
         }
@@ -488,6 +590,18 @@ export const patchTask = async (req, res, next) => {
         success: false,
         message: 'No valid fields to update',
       });
+    }
+
+    // Validate date/time constraints on patch
+    const patchValidationError = validateDateTimes({
+      startDate: task.startDate,
+      endDate: task.endDate,
+      dueDate: task.dueDate,
+      startTime: task.startTime,
+      endTime: task.endTime,
+    });
+    if (patchValidationError) {
+      return res.status(400).json({ success: false, message: patchValidationError });
     }
 
     if (req.body.status && req.body.status !== prevStatus) {

@@ -4,7 +4,7 @@ import { Input } from '../common/Input.jsx';
 import { Button } from '../common/Button.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
 import { useWorkspace } from '../../context/WorkspaceContext.jsx';
-import { toISODate } from '../../utils/dateUtils.js';
+import { toISODate, validateTaskDates } from '../../utils/dateUtils.js';
 import { Plus, X, Check, Clock, Calendar, Tag, Repeat, Bell, Users } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -41,6 +41,7 @@ export const TaskFormModal = ({
   isOpen,
   onClose,
   initialDate,
+  initialStartTime = '',
   editTask = null,
   initialStatus = 'To Do',
 }) => {
@@ -100,8 +101,17 @@ export const TaskFormModal = ({
       setDescription('');
       setStartDate(initialDate ? toISODate(initialDate) : toISODate(new Date()));
       setDueDate('');
-      setStartTime('');
-      setEndTime('');
+      setStartTime(initialStartTime || '');
+      if (initialStartTime && /^\d{2}:\d{2}$/.test(initialStartTime)) {
+        const [h, m] = initialStartTime.split(':').map(Number);
+        if (h === 23) {
+          setEndTime('23:59');
+        } else {
+          setEndTime(`${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+        }
+      } else {
+        setEndTime('');
+      }
       setPriority('Medium');
       setColor('indigo');
       setStatus(initialStatus || 'To Do');
@@ -114,7 +124,7 @@ export const TaskFormModal = ({
       setEstimatedMinutes(30);
     }
     setError('');
-  }, [editTask, isOpen, initialDate, initialStatus, activeWorkspaceId]);
+  }, [editTask, isOpen, initialDate, initialStartTime, initialStatus, activeWorkspaceId]);
 
   const handleAddSubtask = () => {
     if (!newSubtaskTitle.trim()) return;
@@ -152,8 +162,25 @@ export const TaskFormModal = ({
       return;
     }
 
+    // Client-side date/time validation
+    const dateErrors = validateTaskDates({
+      startDate,
+      endDate: null,
+      dueDate: dueDate || null,
+      startTime: startTime || null,
+      endTime: endTime || null,
+    });
+    if (dateErrors.length > 0) {
+      setError(dateErrors[0]);
+      return;
+    }
+
     setIsSubmitting(true);
     setError('');
+
+    // isAllDay: true only when neither start nor end time is provided.
+    // Timed tasks (including open-ended ones with only startTime) are never marked all-day.
+    const computedIsAllDay = Boolean(!startTime && !endTime);
 
     const payload = {
       title: title.trim(),
@@ -162,7 +189,7 @@ export const TaskFormModal = ({
       dueDate: dueDate ? dueDate : null,
       startTime: startTime || null,
       endTime: endTime || null,
-      isAllDay: !startTime,
+      isAllDay: computedIsAllDay,
       priority,
       color,
       status,

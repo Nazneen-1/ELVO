@@ -70,7 +70,24 @@ export const TasksPage = () => {
 
   const { activeWorkspaceId } = useWorkspace();
 
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
+  const [viewMode, setViewModeState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('elvo_tasks_view_mode');
+      return saved === 'kanban' ? 'kanban' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  const setViewMode = (mode) => {
+    const validMode = mode === 'kanban' ? 'kanban' : 'list';
+    setViewModeState(validMode);
+    try {
+      localStorage.setItem('elvo_tasks_view_mode', validMode);
+    } catch (err) {
+      console.error('Failed to save tasks view mode preference:', err);
+    }
+  };
   const [taskToEdit, setTaskToEdit] = useState(null);
   const [createStatus, setCreateStatus] = useState('To Do');
   const [modalInitialDate, setModalInitialDate] = useState(new Date());
