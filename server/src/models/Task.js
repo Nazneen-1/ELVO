@@ -49,6 +49,31 @@ const activitySchema = new mongoose.Schema({
   },
 });
 
+const recurrenceExceptionSchema = new mongoose.Schema(
+  {
+    date: {
+      type: String, // 'YYYY-MM-DD'
+      required: true,
+      trim: true,
+    },
+    action: {
+      type: String,
+      enum: ['completed', 'cancelled', 'modified', 'skipped'],
+      default: 'completed',
+    },
+    status: {
+      type: String,
+      enum: ['To Do', 'In Progress', 'Done'],
+      default: 'Done',
+    },
+    overrides: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+  },
+  { _id: false }
+);
+
 const taskSchema = new mongoose.Schema(
   {
     userId: {
@@ -150,11 +175,28 @@ const taskSchema = new mongoose.Schema(
       interval: {
         type: Number,
         default: 1,
+        min: 1,
       },
       until: {
         type: Date,
         default: null,
       },
+    },
+    // Recurrence exception overrides and completion state for individual occurrences
+    recurrenceExceptions: {
+      type: [recurrenceExceptionSchema],
+      default: [],
+    },
+    // Link to master task if this document is a detached/exception occurrence
+    recurringMasterId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Task',
+      default: null,
+      index: true,
+    },
+    originalOccurrenceDate: {
+      type: String,
+      default: null,
     },
     // Reminder settings
     reminder: {
@@ -275,6 +317,7 @@ taskSchema.pre('validate', function(next) {
 
 taskSchema.index({ userId: 1, startDate: 1, status: 1 });
 taskSchema.index({ workspaceId: 1, startDate: 1 });
+taskSchema.index({ userId: 1, 'recurrence.frequency': 1, startDate: 1 });
 
 const Task = mongoose.model('Task', taskSchema);
 

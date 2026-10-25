@@ -1,9 +1,11 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import { formatDisplayTime } from '../../utils/dateUtils.js';
+import { Repeat } from 'lucide-react';
 
 export const TaskBadge = ({ task, onClick }) => {
   const isCompleted = task.status === 'Done';
+  const isRecurring = Boolean(task.recurrence?.frequency && task.recurrence.frequency !== 'none');
 
   const colorStyles = {
     indigo: 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200/70 dark:border-indigo-800/50 hover:border-indigo-400',
@@ -63,6 +65,9 @@ export const TaskBadge = ({ task, onClick }) => {
           )}
         />
         <span className="truncate">{task.title}</span>
+        {isRecurring && (
+          <Repeat className="w-2.5 h-2.5 shrink-0 opacity-60 ml-0.5" title={`Repeats ${task.recurrence.frequency}`} />
+        )}
       </div>
 
       {task.startTime && !task.isAllDay && (

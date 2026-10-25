@@ -201,7 +201,7 @@ export const WeekView = ({
               className="p-1 border-r border-slate-200/80 dark:border-zinc-800/80 last:border-r-0 space-y-1"
             >
               {allDayTasks.map((task) => (
-                <TaskBadge key={task._id} task={task} onClick={onSelectTask} />
+                <TaskBadge key={task.occurrenceId || task._id} task={task} onClick={onSelectTask} />
               ))}
               {allDayTasks.length === 0 && (
                 <div
@@ -294,7 +294,7 @@ export const WeekView = ({
                 {/* Timed Tasks positioned using computed overlap-safe layout */}
                 {timedTasks.map((timed) => (
                   <TimedTaskCard
-                    key={timed.task._id}
+                    key={timed.task.occurrenceId || timed.task._id}
                     task={timed.task}
                     topPercent={timed.topPercent}
                     heightPercent={timed.heightPercent}
@@ -326,7 +326,7 @@ export const WeekView = ({
                   </span>
                   <div className="space-y-1">
                     {allDayTasks.map((task) => (
-                      <TaskBadge key={task._id} task={task} onClick={onSelectTask} />
+                      <TaskBadge key={task.occurrenceId || task._id} task={task} onClick={onSelectTask} />
                     ))}
                   </div>
                 </div>
@@ -386,7 +386,7 @@ export const WeekView = ({
                   {/* Timed Tasks */}
                   {timedTasks.map((timed) => (
                     <TimedTaskCard
-                      key={timed.task._id}
+                      key={timed.task.occurrenceId || timed.task._id}
                       task={timed.task}
                       topPercent={timed.topPercent}
                       heightPercent={timed.heightPercent}

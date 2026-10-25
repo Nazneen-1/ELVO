@@ -1,0 +1,320 @@
+/**
+ * ELVO Phase 2.3A Recurrence Engine
+ *
+ * Deterministic calendar-date arithmetic for recurring tasks (daily, weekly, monthly).
+ * Operates purely on UTC calendar date components (YYYY-MM-DD), avoiding local timestamp
+ * or daylight saving time (DST) wall-clock drift.
+ */
+
+/**
+ * Check if a string is a valid YYYY-MM-DD date.
+ */
+export const isValidISODate = (str) => {
+  return typeof str === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(str);
+};
+
+/**
+ * Format Date object or YYYY-MM-DD string to canonical YYYY-MM-DD string in UTC.
+ */
+export const toISODateOnly = (dateVal) => {
+  if (!dateVal) return null;
+  if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+    return dateVal;
+  }
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+/**
+ * Determine if a year is a leap year.
+ */
+export const isLeapYear = (year) => {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+};
+
+/**
+ * Get the number of days in a specific month of a year.
+ * month: 1-indexed (1 = January, 2 = February, ..., 12 = December).
+ */
+export const daysInMonth = (year, month) => {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+};
+
+/**
+ * Add an integer number of days to a YYYY-MM-DD date string using pure UTC arithmetic.
+ */
+export const addDaysUTC = (dateStr, days) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d + days));
+  const ty = target.getUTCFullYear();
+  const tm = String(target.getUTCMonth() + 1).padStart(2, '0');
+  const td = String(target.getUTCDate()).padStart(2, '0');
+  return `${ty}-${tm}-${td}`;
+};
+
+/**
+ * Add an integer number of months to a YYYY-MM-DD date string,
+ * preserving the original target day-of-month and clamping to month-end for shorter months.
+ *
+ * Example (originalTargetDay = 31):
+ * - Jan 31 -> Feb 28 (or Feb 29 in leap year)
+ * - Feb 28 -> Mar 31 (reverts back to original day 31)
+ * - Mar 31 -> Apr 30 (clamps to 30)
+ */
+export const addMonthsUTC = (startDateStr, monthsToAdd, originalTargetDay = null) => {
+  const [y, m, d] = startDateStr.split('-').map(Number);
+  const targetDayBase = originalTargetDay || d;
+
+  const totalMonths = y * 12 + (m - 1) + monthsToAdd;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = (totalMonths % 12) + 1;
+
+  const maxDays = daysInMonth(targetYear, targetMonth);
+  const finalDay = Math.min(targetDayBase, maxDays);
+
+  const sm = String(targetMonth).padStart(2, '0');
+  const sd = String(finalDay).padStart(2, '0');
+  return `${targetYear}-${sm}-${sd}`;
+};
+
+/**
+ * Generate all occurrence dates (as YYYY-MM-DD strings) for a recurring series
+ * within a requested date window [windowStart, windowEnd].
+ *
+ * Rules:
+ * 1. No occurrences generated before masterStartDate.
+ * 2. No occurrences generated after untilDate (inclusive upper bound).
+ * 3. Occurrences generated only within [windowStart, windowEnd].
+ * 4. Respects interval (e.g. every 2 weeks, every 3 months).
+ * 5. Deterministic month-end clamping and leap-year behavior.
+ */
+export const generateOccurrenceDates = ({
+  startDate,
+  frequency = 'none',
+  interval = 1,
+  windowStart,
+  windowEnd,
+  until = null,
+  maxOccurrences = 500,
+}) => {
+  const masterStartStr = toISODateOnly(startDate);
+  const winStartStr = toISODateOnly(windowStart);
+  const winEndStr = toISODateOnly(windowEnd);
+  const untilStr = until ? toISODateOnly(until) : null;
+
+  if (!masterStartStr || !winStartStr || !winEndStr) {
+    return [];
+  }
+
+  // Non-recurring tasks
+  if (!frequency || frequency === 'none') {
+    if (masterStartStr >= winStartStr && masterStartStr <= winEndStr) {
+      return [masterStartStr];
+    }
+    return [];
+  }
+
+  const validInterval = Math.max(Number(interval) || 1, 1);
+  const effectiveEndBound = untilStr && untilStr < winEndStr ? untilStr : winEndStr;
+
+  // If the series starts after the requested window or after its until date, nothing to generate
+  if (masterStartStr > effectiveEndBound) {
+    return [];
+  }
+
+  // If until date is before the window start, the series has already ended
+  if (untilStr && untilStr < winStartStr) {
+    return [];
+  }
+
+  const occurrences = [];
+  const [sy, sm, sd] = masterStartStr.split('-').map(Number);
+  const originalTargetDay = sd;
+
+  if (frequency === 'daily') {
+    // Fast-forward to window start if masterStartDate is far in the past
+    let current = masterStartStr;
+    if (current < winStartStr) {
+      const [wy, wm, wd] = winStartStr.split('-').map(Number);
+      const startMs = Date.UTC(sy, sm - 1, sd);
+      const winStartMs = Date.UTC(wy, wm - 1, wd);
+      const diffDays = Math.floor((winStartMs - startMs) / (1000 * 60 * 60 * 24));
+      const steps = Math.floor(diffDays / validInterval);
+      if (steps > 0) {
+        current = addDaysUTC(masterStartStr, steps * validInterval);
+      }
+      // If still before window start, take one more step
+      while (current < winStartStr) {
+        current = addDaysUTC(current, validInterval);
+      }
+    }
+
+    let count = 0;
+    while (current <= effectiveEndBound && count < maxOccurrences) {
+      if (current >= winStartStr && current >= masterStartStr) {
+        occurrences.push(current);
+      }
+      current = addDaysUTC(current, validInterval);
+      count++;
+    }
+  } else if (frequency === 'weekly') {
+    const weekIntervalDays = validInterval * 7;
+    let current = masterStartStr;
+
+    // Fast-forward to window start
+    if (current < winStartStr) {
+      const [wy, wm, wd] = winStartStr.split('-').map(Number);
+      const startMs = Date.UTC(sy, sm - 1, sd);
+      const winStartMs = Date.UTC(wy, wm - 1, wd);
+      const diffDays = Math.floor((winStartMs - startMs) / (1000 * 60 * 60 * 24));
+      const steps = Math.floor(diffDays / weekIntervalDays);
+      if (steps > 0) {
+        current = addDaysUTC(masterStartStr, steps * weekIntervalDays);
+      }
+      while (current < winStartStr) {
+        current = addDaysUTC(current, weekIntervalDays);
+      }
+    }
+
+    let count = 0;
+    while (current <= effectiveEndBound && count < maxOccurrences) {
+      if (current >= winStartStr && current >= masterStartStr) {
+        occurrences.push(current);
+      }
+      current = addDaysUTC(current, weekIntervalDays);
+      count++;
+    }
+  } else if (frequency === 'monthly') {
+    // Month step calculation from series origin
+    let monthStep = 0;
+    if (masterStartStr < winStartStr) {
+      const [wy, wm] = winStartStr.split('-').map(Number);
+      const diffMonths = (wy - sy) * 12 + (wm - sm);
+      const steps = Math.floor(diffMonths / validInterval) * validInterval;
+      if (steps > 0) {
+        monthStep = steps;
+      }
+    }
+
+    let current = addMonthsUTC(masterStartStr, monthStep, originalTargetDay);
+    // Rewind slightly if overshot, or step forward if still before winStart
+    while (monthStep > 0 && current > winStartStr) {
+      monthStep -= validInterval;
+      current = addMonthsUTC(masterStartStr, monthStep, originalTargetDay);
+    }
+    while (current < winStartStr) {
+      monthStep += validInterval;
+      current = addMonthsUTC(masterStartStr, monthStep, originalTargetDay);
+    }
+
+    let count = 0;
+    while (current <= effectiveEndBound && count < maxOccurrences) {
+      if (current >= winStartStr && current >= masterStartStr) {
+        occurrences.push(current);
+      }
+      monthStep += validInterval;
+      current = addMonthsUTC(masterStartStr, monthStep, originalTargetDay);
+      count++;
+    }
+  }
+
+  return occurrences;
+};
+
+/**
+ * Project occurrences for a single task within the date window.
+ * Returns an array of task occurrence objects.
+ */
+export const projectTaskOccurrences = (task, windowStart, windowEnd) => {
+  const plainTask = typeof task.toObject === 'function' ? task.toObject({ virtuals: true }) : { ...task };
+  const frequency = plainTask.recurrence?.frequency || 'none';
+
+  // If non-recurring, check window containment
+  if (frequency === 'none') {
+    const taskDateStr = toISODateOnly(plainTask.startDate);
+    const winStartStr = toISODateOnly(windowStart);
+    const winEndStr = toISODateOnly(windowEnd);
+    if (taskDateStr >= winStartStr && taskDateStr <= winEndStr) {
+      return [
+        {
+          ...plainTask,
+          isOccurrence: false,
+          masterTaskId: plainTask._id ? plainTask._id.toString() : null,
+        },
+      ];
+    }
+    return [];
+  }
+
+  // Recurring series: generate dates
+  const occurrenceDates = generateOccurrenceDates({
+    startDate: plainTask.startDate,
+    frequency,
+    interval: plainTask.recurrence?.interval || 1,
+    windowStart,
+    windowEnd,
+    until: plainTask.recurrence?.until || null,
+  });
+
+  const exceptions = Array.isArray(plainTask.recurrenceExceptions)
+    ? plainTask.recurrenceExceptions
+    : [];
+  const exceptionMap = new Map();
+  exceptions.forEach((ex) => {
+    if (ex && ex.date) {
+      exceptionMap.set(ex.date, ex);
+    }
+  });
+
+  const masterIdStr = plainTask._id ? plainTask._id.toString() : '';
+
+  return occurrenceDates
+    .map((occDate) => {
+      const ex = exceptionMap.get(occDate);
+      if (ex && (ex.action === 'skipped' || ex.action === 'cancelled')) {
+        return null;
+      }
+
+      const [y, m, d] = occDate.split('-').map(Number);
+      const occurrenceStartDateUTC = new Date(Date.UTC(y, m - 1, d));
+
+      return {
+        ...plainTask,
+        _id: plainTask._id, // Real MongoDB ObjectId retained for standard controller safety
+        occurrenceId: `${masterIdStr}__${occDate}`, // Unambiguous virtual occurrence identifier
+        occurrenceDate: occDate,
+        masterTaskId: masterIdStr,
+        isOccurrence: true,
+        startDate: occurrenceStartDateUTC,
+        status: ex?.status || plainTask.status,
+        ...(ex?.overrides || {}),
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
+ * Expand a list of tasks into their window occurrences.
+ */
+export const expandTasksForWindow = (tasks = [], windowStart, windowEnd) => {
+  if (!tasks || tasks.length === 0) return [];
+  const result = [];
+  tasks.forEach((task) => {
+    const occurrences = projectTaskOccurrences(task, windowStart, windowEnd);
+    result.push(...occurrences);
+  });
+  // Sort by startDate asc, startTime asc
+  result.sort((a, b) => {
+    const aDate = toISODateOnly(a.startDate);
+    const bDate = toISODateOnly(b.startDate);
+    if (aDate !== bDate) return aDate.localeCompare(bDate);
+    const aTime = a.startTime || '00:00';
+    const bTime = b.startTime || '00:00';
+    return aTime.localeCompare(bTime);
+  });
+  return result;
+};

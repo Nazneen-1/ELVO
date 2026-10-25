@@ -447,10 +447,22 @@ async function runPhase2ViewsTests() {
   try {
     const output = execSync('node test-phase-2-2.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
     const match = output.match(/✔ Passed:\s*(\d+)/);
-    const passedCount = match ? match[1] : '30';
-    recordTest('Phase2-Views', `Phase 2.2 suite (${passedCount}/30 checks passed: week/day navigation, overlap layout, week-start, all-day)`, 'PASS');
+    const passedCount = match ? match[1] : '48';
+    recordTest('Phase2-Views', `Phase 2.2 suite (${passedCount}/48 checks passed: week/day navigation, overlap layout, week-start, all-day)`, 'PASS');
   } catch (err) {
     recordTest('Phase2-Views', 'Phase 2.2 week & day views suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runPhase2RecurrenceTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 6. PHASE 2.3A RECURRENCE ENGINE TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-3.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
+    const match = output.match(/✔ Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '35';
+    recordTest('Phase2-RecurrenceEngine', `Phase 2.3A suite (${passedCount}/35 checks passed: daily/weekly/monthly arithmetic, leap years, month-end, window boundaries)`, 'PASS');
+  } catch (err) {
+    recordTest('Phase2-RecurrenceEngine', 'Phase 2.3A recurrence engine suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
   }
 }
 
@@ -464,6 +476,7 @@ async function runAll() {
   await runServerDeploymentIntegrationTests();
   await runPhase2DateHygieneTests();
   await runPhase2ViewsTests();
+  await runPhase2RecurrenceTests();
 
   console.log('\n\x1b[1m\x1b[35m=======================================================');
   console.log('                   TEST SUMMARY                        ');

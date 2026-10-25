@@ -134,7 +134,7 @@ export const compareTime = (a, b) => {
  * - An absent endTime with a present startTime is valid (open-ended timed task).
  * - isAllDay is not changed here; the caller controls that field.
  */
-export const validateTaskDates = ({ startDate, endDate, dueDate, startTime, endTime }) => {
+export const validateTaskDates = ({ startDate, endDate, dueDate, startTime, endTime, recurrence }) => {
   const errors = [];
 
   const startDay = toISODate(startDate);
@@ -159,6 +159,18 @@ export const validateTaskDates = ({ startDate, endDate, dueDate, startTime, endT
     const sameDay = !endDay || endDay === startDay;
     if (sameDay && compareTime(endTime, startTime) <= 0) {
       errors.push('End time must be later than start time.');
+    }
+  }
+
+  if (recurrence && recurrence.frequency && recurrence.frequency !== 'none') {
+    if (recurrence.until) {
+      const untilDay = toISODate(recurrence.until);
+      if (untilDay && startDay && untilDay < startDay) {
+        errors.push('Recurrence end date cannot be earlier than start date.');
+      }
+    }
+    if (recurrence.interval !== undefined && Number(recurrence.interval) < 1) {
+      errors.push('Recurrence interval must be at least 1.');
     }
   }
 
@@ -325,3 +337,14 @@ export const computeTimedTasksLayout = (tasks = []) => {
 
   return { allDayTasks, timedTasks };
 };
+
+// Re-export recurrence engine utilities for calendar consumption
+export {
+  daysInMonth,
+  isLeapYear,
+  addDaysUTC,
+  addMonthsUTC,
+  generateOccurrenceDates,
+  projectTaskOccurrences,
+  expandTasksForWindow,
+} from './recurrenceEngine.js';

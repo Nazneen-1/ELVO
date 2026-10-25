@@ -1,7 +1,7 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import { formatDisplayTime } from '../../utils/dateUtils.js';
-import { CheckCircle2, Clock } from 'lucide-react';
+import { CheckCircle2, Clock, Repeat } from 'lucide-react';
 
 const COLOR_MAP = {
   indigo: 'bg-indigo-50/95 dark:bg-indigo-950/80 border-indigo-500 text-indigo-950 dark:text-indigo-100 hover:border-indigo-600',
@@ -79,11 +79,14 @@ export const TimedTaskCard = ({
             <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', dotColor)} />
             <h4
               className={clsx(
-                'text-[11px] sm:text-xs font-semibold truncate',
+                'text-[11px] sm:text-xs font-semibold truncate flex items-center gap-1',
                 isDone && 'line-through opacity-75'
               )}
             >
-              {task.title}
+              <span className="truncate">{task.title}</span>
+              {task.recurrence?.frequency && task.recurrence.frequency !== 'none' && (
+                <Repeat className="w-2.5 h-2.5 shrink-0 opacity-60" title={`Repeats ${task.recurrence.frequency}`} />
+              )}
             </h4>
           </div>
 

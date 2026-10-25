@@ -134,7 +134,7 @@ export const DayView = ({
           </span>
           <div className="flex flex-wrap gap-2">
             {allDayTasks.map((task) => (
-              <div key={task._id} className="min-w-[160px] max-w-xs">
+              <div key={task.occurrenceId || task._id} className="min-w-[160px] max-w-xs">
                 <TaskBadge task={task} onClick={onSelectTask} />
               </div>
             ))}
@@ -208,7 +208,7 @@ export const DayView = ({
             {/* Overlap-safe timed task cards */}
             {timedTasks.map((timed) => (
               <TimedTaskCard
-                key={timed.task._id}
+                key={timed.task.occurrenceId || timed.task._id}
                 task={timed.task}
                 topPercent={timed.topPercent}
                 heightPercent={timed.heightPercent}

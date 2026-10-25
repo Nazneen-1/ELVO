@@ -116,7 +116,7 @@ export const DayCell = ({
       {/* Task List */}
       <div className="flex-1 overflow-y-auto space-y-1">
         {visibleTasks.map((task) => (
-          <TaskBadge key={task._id} task={task} onClick={onSelectTask} />
+          <TaskBadge key={task.occurrenceId || task._id} task={task} onClick={onSelectTask} />
         ))}
 
         {overflowCount > 0 && (

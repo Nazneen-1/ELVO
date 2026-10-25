@@ -1,5 +1,6 @@
 import Task from '../models/Task.js';
 import Workspace from '../models/Workspace.js';
+import { expandTasksForWindow } from '../utils/recurrenceEngine.js';
 
 // Helper to check user access to a workspace
 const verifyWorkspaceAccess = async (workspaceId, userId) => {
@@ -64,7 +65,7 @@ export const toCalendarDateString = (val) => {
  * - When both startTime and endTime are provided and the task is single-day
  *   (endDate equals startDate or endDate is absent), endTime must be > startTime.
  */
-export const validateDateTimes = ({ startDate, endDate, dueDate, startTime, endTime }) => {
+export const validateDateTimes = ({ startDate, endDate, dueDate, startTime, endTime, recurrence }) => {
   const startDay = toCalendarDateString(startDate);
   const endDay = toCalendarDateString(endDate);
   const dueDay = toCalendarDateString(dueDate);
@@ -80,6 +81,17 @@ export const validateDateTimes = ({ startDate, endDate, dueDate, startTime, endT
     const isSingleDay = !endDay || endDay === startDay;
     if (isSingleDay && compareTime(endTime, startTime) <= 0) {
       return 'End time must be later than start time.';
+    }
+  }
+  if (recurrence && recurrence.frequency && recurrence.frequency !== 'none') {
+    if (recurrence.until) {
+      const untilDay = toCalendarDateString(recurrence.until);
+      if (untilDay && startDay && untilDay < startDay) {
+        return 'Recurrence end date cannot be earlier than start date.';
+      }
+    }
+    if (recurrence.interval !== undefined && Number(recurrence.interval) < 1) {
+      return 'Recurrence interval must be at least 1.';
     }
   }
   return null;
@@ -111,18 +123,58 @@ export const getTasks = async (req, res, next) => {
 
     // Filter by date range if provided.
     // Both start and end are sent as YYYY-MM-DD strings from the frontend.
-    // Parse as UTC midnight so the boundary is consistent regardless of server timezone.
-    // The upper bound extends to 23:59:59.999Z to include all tasks on the end date.
     if (start || end) {
-      query.startDate = {};
-      if (start) {
-        query.startDate.$gte = parseDateOnlyUTC(start);
+      const parsedStart = start ? parseDateOnlyUTC(start) : null;
+      const parsedEnd = end ? parseDateOnlyUTC(end) : null;
+      const endOfDay = parsedEnd ? new Date(parsedEnd.getTime() + 24 * 60 * 60 * 1000 - 1) : null;
+
+      const dateOrClauses = [];
+
+      // 1. Non-recurring or detached occurrence tasks
+      const nonRecurringMatch = {
+        $or: [
+          { 'recurrence.frequency': { $exists: false } },
+          { 'recurrence.frequency': 'none' },
+          { 'recurrence.frequency': null },
+        ],
+      };
+      const startBounds = {};
+      if (parsedStart) startBounds.$gte = parsedStart;
+      if (endOfDay) startBounds.$lte = endOfDay;
+      if (Object.keys(startBounds).length > 0) {
+        nonRecurringMatch.startDate = startBounds;
       }
-      if (end) {
-        const endDay = parseDateOnlyUTC(end);
-        // Extend to end-of-day so tasks stored at UTC midnight on the last grid day are included
-        const endOfDay = endDay ? new Date(endDay.getTime() + 24 * 60 * 60 * 1000 - 1) : null;
-        if (endOfDay) query.startDate.$lte = endOfDay;
+      dateOrClauses.push(nonRecurringMatch);
+
+      // 2. Recurring series that began on or before window end
+      // and haven't ended before window start
+      const recurringMatch = {
+        'recurrence.frequency': { $in: ['daily', 'weekly', 'monthly'] },
+      };
+      if (endOfDay) {
+        recurringMatch.startDate = { $lte: endOfDay };
+      }
+      if (parsedStart) {
+        recurringMatch.$or = [
+          { 'recurrence.until': null },
+          { 'recurrence.until': { $exists: false } },
+          { 'recurrence.until': { $gte: parsedStart } },
+        ];
+      }
+      dateOrClauses.push(recurringMatch);
+
+      const dateFilter = { $or: dateOrClauses };
+
+      // Combine with existing query criteria ($or for user/workspace permissions)
+      if (query.$or) {
+        query.$and = query.$and || [];
+        query.$and.push({ $or: query.$or });
+        delete query.$or;
+        query.$and.push(dateFilter);
+      } else if (query.$and) {
+        query.$and.push(dateFilter);
+      } else {
+        query.$and = [dateFilter];
       }
     }
 
@@ -168,10 +220,21 @@ export const getTasks = async (req, res, next) => {
       .populate('assignedTo', 'name email')
       .sort(sortOptions);
 
+    let resultTasks = tasks;
+    if (start && end) {
+      resultTasks = expandTasksForWindow(tasks, start, end);
+      if (status && status !== 'all') {
+        resultTasks = resultTasks.filter((t) => t.status === status);
+      }
+      if (priority && priority !== 'all') {
+        resultTasks = resultTasks.filter((t) => t.priority === priority);
+      }
+    }
+
     return res.status(200).json({
       success: true,
-      count: tasks.length,
-      data: tasks,
+      count: resultTasks.length,
+      data: resultTasks,
     });
   } catch (error) {
     next(error);
@@ -393,6 +456,14 @@ export const createTask = async (req, res, next) => {
     // endDate defaults to startDate when not provided (single-day task)
     const parsedEnd = endDate ? parseDateOnlyUTC(endDate) : null;
     const parsedDue = parseDateOnlyUTC(dueDate);
+    let cleanRecurrence = { frequency: 'none', interval: 1, until: null };
+    if (recurrence && typeof recurrence === 'object') {
+      cleanRecurrence.frequency = ['daily', 'weekly', 'monthly'].includes(recurrence.frequency)
+        ? recurrence.frequency
+        : 'none';
+      cleanRecurrence.interval = Math.max(Number(recurrence.interval) || 1, 1);
+      cleanRecurrence.until = recurrence.until ? parseDateOnlyUTC(recurrence.until) : null;
+    }
 
     // Server-side validation (authoritative safeguard)
     const validationError = validateDateTimes({
@@ -401,6 +472,7 @@ export const createTask = async (req, res, next) => {
       dueDate: parsedDue,
       startTime: startTime || null,
       endTime: endTime || null,
+      recurrence: cleanRecurrence,
     });
     if (validationError) {
       return res.status(400).json({ success: false, message: validationError });
@@ -423,7 +495,7 @@ export const createTask = async (req, res, next) => {
       color: color || 'indigo',
       tags: Array.isArray(tags) ? tags : [],
       subtasks: Array.isArray(subtasks) ? subtasks : [],
-      recurrence: recurrence || { frequency: 'none', interval: 1 },
+      recurrence: cleanRecurrence,
       reminder: reminder || { enabled: false, minutesBefore: 15 },
       estimatedMinutes: Number(estimatedMinutes) || 0,
       activity: [
@@ -440,6 +512,7 @@ export const createTask = async (req, res, next) => {
       data: task,
     });
   } catch (error) {
+    console.error('Create Task Error:', error);
     next(error);
   }
 };
@@ -494,6 +567,13 @@ export const updateTask = async (req, res, next) => {
           task[field] = parseDateOnlyUTC(req.body[field]);
         } else if (field === 'workspaceId' || field === 'assignedTo') {
           task[field] = (req.body[field] && req.body[field] !== 'personal') ? req.body[field] : null;
+        } else if (field === 'recurrence' && req.body.recurrence) {
+          const rec = req.body.recurrence;
+          task.recurrence = {
+            frequency: ['daily', 'weekly', 'monthly'].includes(rec.frequency) ? rec.frequency : 'none',
+            interval: Math.max(Number(rec.interval) || 1, 1),
+            until: rec.until ? parseDateOnlyUTC(rec.until) : null,
+          };
         } else {
           task[field] = req.body[field];
         }
@@ -507,6 +587,7 @@ export const updateTask = async (req, res, next) => {
       dueDate: task.dueDate,
       startTime: task.startTime,
       endTime: task.endTime,
+      recurrence: task.recurrence,
     });
     if (updateValidationError) {
       return res.status(400).json({ success: false, message: updateValidationError });
@@ -567,6 +648,9 @@ export const patchTask = async (req, res, next) => {
       'startTime',
       'endTime',
       'isAllDay',
+      'recurrence',
+      'recurrenceExceptions',
+      'recurringMasterId',
     ];
 
     let updated = false;
@@ -578,6 +662,28 @@ export const patchTask = async (req, res, next) => {
           if (parsed) task.startDate = parsed;
         } else if (field === 'endDate' || field === 'dueDate') {
           task[field] = parseDateOnlyUTC(req.body[field]);
+        } else if (field === 'recurrence' && req.body.recurrence) {
+          const rec = req.body.recurrence;
+          task.recurrence = {
+            frequency: ['daily', 'weekly', 'monthly'].includes(rec.frequency) ? rec.frequency : 'none',
+            interval: Math.max(Number(rec.interval) || 1, 1),
+            until: rec.until ? parseDateOnlyUTC(rec.until) : null,
+          };
+        } else if (field === 'recurrenceExceptions' && Array.isArray(req.body.recurrenceExceptions)) {
+          const cleanExceptions = [];
+          const seenDates = new Set();
+          req.body.recurrenceExceptions.forEach((ex) => {
+            if (ex && ex.date && !seenDates.has(ex.date)) {
+              seenDates.add(ex.date);
+              cleanExceptions.push({
+                date: ex.date,
+                action: ex.action || 'completed',
+                status: ex.status || 'Done',
+                overrides: ex.overrides || {},
+              });
+            }
+          });
+          task.recurrenceExceptions = cleanExceptions;
         } else {
           task[field] = req.body[field];
         }
@@ -599,6 +705,7 @@ export const patchTask = async (req, res, next) => {
       dueDate: task.dueDate,
       startTime: task.startTime,
       endTime: task.endTime,
+      recurrence: task.recurrence,
     });
     if (patchValidationError) {
       return res.status(400).json({ success: false, message: patchValidationError });
