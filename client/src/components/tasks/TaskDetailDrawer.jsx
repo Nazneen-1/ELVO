@@ -24,8 +24,21 @@ import {
   Timer,
   Users,
   CalendarX,
+  CalendarClock,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+
+export const formatReminderLeadTime = (minutes) => {
+  const m = Number(minutes);
+  if (!m || isNaN(m) || m <= 0) return 'Reminder';
+  if (m < 60) return `${m}m reminder`;
+  if (m < 1440) {
+    const hours = Math.round(m / 60);
+    return `${hours}h reminder`;
+  }
+  const days = Math.round(m / 1440);
+  return `${days}d reminder`;
+};
 
 export const TaskDetailDrawer = ({
   task,
@@ -33,12 +46,26 @@ export const TaskDetailDrawer = ({
   onClose,
   onEdit,
 }) => {
-  const { updateTask, deleteTask, updateOccurrence, skipOccurrence, toggleSubtask, addComment } = useTasks();
+  const {
+    updateTask,
+    deleteTask,
+    updateOccurrence,
+    skipOccurrence,
+    rescheduleOccurrence,
+    toggleSubtask,
+    addComment,
+  } = useTasks();
   const { user } = useAuth();
   const [isDeleting, setIsDeleting] = useState(false);
   const [isStatusUpdating, setIsStatusUpdating] = useState(false);
   const [isOccurrenceUpdating, setIsOccurrenceUpdating] = useState(false);
   const [isSkipping, setIsSkipping] = useState(false);
+  const [isRescheduling, setIsRescheduling] = useState(false);
+  const [showRescheduleForm, setShowRescheduleForm] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleStartTime, setRescheduleStartTime] = useState('');
+  const [rescheduleEndTime, setRescheduleEndTime] = useState('');
+  const [rescheduleError, setRescheduleError] = useState(null);
   const [commentText, setCommentText] = useState('');
   const [isPostingComment, setIsPostingComment] = useState(false);
   const [activeTab, setActiveTab] = useState('details'); // 'details' | 'comments' | 'activity'
@@ -47,6 +74,10 @@ export const TaskDetailDrawer = ({
 
   const isOccurrence = Boolean(task.isOccurrence && (task.occurrenceDate || task.occurrenceId));
   const occurrenceDate = task.occurrenceDate || (task.occurrenceId ? task.occurrenceId.split('__')[1] : null);
+  const seriesOccurrenceDate =
+    task.originalOccurrenceDate ||
+    task.occurrenceDate ||
+    (task.occurrenceId ? task.occurrenceId.split('__')[1] : null);
   const masterTaskId = task.masterTaskId || task._id;
 
   const STATUS_ORDER = ['To Do', 'In Progress', 'Done'];
@@ -59,24 +90,68 @@ export const TaskDetailDrawer = ({
   };
 
   const handleToggleOccurrenceStatus = async () => {
-    if (!isOccurrence || !occurrenceDate) return;
+    if (!isOccurrence || !seriesOccurrenceDate) return;
     setIsOccurrenceUpdating(true);
     const targetAction = task.status === 'Done' ? 'reopen' : 'complete';
-    await updateOccurrence(masterTaskId, occurrenceDate, { action: targetAction });
+    await updateOccurrence(masterTaskId, seriesOccurrenceDate, { action: targetAction });
     setIsOccurrenceUpdating(false);
   };
 
   const handleSkipOccurrence = async () => {
-    if (!isOccurrence || !occurrenceDate) return;
+    if (!isOccurrence || !seriesOccurrenceDate) return;
     if (
       window.confirm(
-        `Skip the occurrence on ${occurrenceDate}? It will be removed from your calendar without affecting the rest of the series.`
+        `Skip the occurrence on ${occurrenceDate || seriesOccurrenceDate}? It will be removed from your calendar without affecting the rest of the series.`
       )
     ) {
       setIsSkipping(true);
-      await skipOccurrence(masterTaskId, occurrenceDate);
+      await skipOccurrence(masterTaskId, seriesOccurrenceDate);
       setIsSkipping(false);
       onClose();
+    }
+  };
+
+  const handleToggleRescheduleForm = () => {
+    if (!showRescheduleForm) {
+      const currentIso =
+        task.occurrenceDate ||
+        (task.startDate
+          ? typeof task.startDate === 'string'
+            ? task.startDate.split('T')[0]
+            : task.startDate.toISOString().split('T')[0]
+          : seriesOccurrenceDate);
+      setRescheduleDate(currentIso || '');
+      setRescheduleStartTime(task.startTime || '');
+      setRescheduleEndTime(task.endTime || '');
+      setRescheduleError(null);
+    }
+    setShowRescheduleForm((prev) => !prev);
+  };
+
+  const handleSaveReschedule = async (e) => {
+    e.preventDefault();
+    if (!rescheduleDate) {
+      setRescheduleError('Please choose a destination date');
+      return;
+    }
+    if (rescheduleStartTime && rescheduleEndTime && rescheduleEndTime <= rescheduleStartTime) {
+      setRescheduleError('End time must be after start time');
+      return;
+    }
+
+    setIsRescheduling(true);
+    setRescheduleError(null);
+    const res = await rescheduleOccurrence(masterTaskId, seriesOccurrenceDate, {
+      rescheduledDate: rescheduleDate,
+      startTime: rescheduleStartTime || null,
+      endTime: rescheduleEndTime || null,
+      isAllDay: !rescheduleStartTime,
+    });
+    setIsRescheduling(false);
+    if (!res.success) {
+      setRescheduleError(res.error || 'Failed to reschedule occurrence');
+    } else {
+      setShowRescheduleForm(false);
     }
   };
 
@@ -160,7 +235,7 @@ export const TaskDetailDrawer = ({
             ) : null}
             {task.reminder?.enabled && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300">
-                <Bell className="w-3 h-3" /> 15m reminder
+                <Bell className="w-3 h-3" /> {formatReminderLeadTime(task.reminder?.minutesBefore)}
               </span>
             )}
           </div>
@@ -216,7 +291,7 @@ export const TaskDetailDrawer = ({
                 <span>{formattedDate}</span>
               </div>
 
-              {task.startTime ? (
+              {task.startTime && !task.isAllDay ? (
                 <div className="flex items-center gap-2 text-slate-700 dark:text-zinc-300">
                   <Clock className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                   <span>
@@ -329,8 +404,16 @@ export const TaskDetailDrawer = ({
                     <span>Occurrence Action ({occurrenceDate})</span>
                   </div>
                   <p className="text-[11px] text-purple-700 dark:text-purple-300 leading-relaxed">
-                    Completing, reopening, or skipping applies exclusively to this occurrence date. The rest of the recurring series remains unchanged.
+                    Completing, reopening, skipping, or rescheduling applies exclusively to this occurrence date. The rest of the recurring series remains unchanged.
                   </p>
+                  {task.isRescheduled && (
+                    <div className="mt-2 pt-2 border-t border-purple-200/60 dark:border-purple-800/40 text-[11px] font-medium text-purple-800 dark:text-purple-300 flex items-center gap-1.5">
+                      <CalendarClock className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                      <span>
+                        Rescheduled from series date: <strong>{seriesOccurrenceDate}</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -353,6 +436,107 @@ export const TaskDetailDrawer = ({
                     <CalendarX className="w-4 h-4 mr-1.5 text-rose-500" />
                     Skip Occurrence
                   </Button>
+                </div>
+
+                {/* Reschedule this occurrence */}
+                <div className="pt-1">
+                  {!showRescheduleForm ? (
+                    <Button
+                      variant="outline"
+                      className="w-full justify-center text-slate-700 dark:text-zinc-300 border-slate-200 dark:border-zinc-700 hover:border-indigo-400 dark:hover:border-indigo-600"
+                      onClick={handleToggleRescheduleForm}
+                    >
+                      <CalendarClock className="w-4 h-4 mr-1.5 text-indigo-600 dark:text-indigo-400" />
+                      Reschedule this occurrence
+                    </Button>
+                  ) : (
+                    <form
+                      onSubmit={handleSaveReschedule}
+                      className="p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-950/70 border border-slate-200 dark:border-zinc-800 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-zinc-100">
+                          <CalendarClock className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          <span>Reschedule this occurrence</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowRescheduleForm(false)}
+                          className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-zinc-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-normal">
+                        Move only this occurrence to a new date and optional time. The master series schedule remains untouched.
+                      </p>
+
+                      {rescheduleError && (
+                        <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{rescheduleError}</span>
+                        </div>
+                      )}
+
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-medium text-slate-700 dark:text-zinc-300">
+                          Destination Date <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={rescheduleDate}
+                          onChange={(e) => setRescheduleDate(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-700 dark:text-zinc-300">
+                            Start Time
+                          </label>
+                          <input
+                            type="time"
+                            value={rescheduleStartTime}
+                            onChange={(e) => setRescheduleStartTime(e.target.value)}
+                            className="w-full px-2 py-1.5 text-xs rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-medium text-slate-700 dark:text-zinc-300">
+                            End Time
+                          </label>
+                          <input
+                            type="time"
+                            value={rescheduleEndTime}
+                            onChange={(e) => setRescheduleEndTime(e.target.value)}
+                            className="w-full px-2 py-1.5 text-xs rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowRescheduleForm(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          size="sm"
+                          isLoading={isRescheduling}
+                        >
+                          Save Reschedule
+                        </Button>
+                      </div>
+                    </form>
+                  )}
                 </div>
               </div>
             ) : (

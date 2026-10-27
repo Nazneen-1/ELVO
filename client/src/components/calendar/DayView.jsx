@@ -10,6 +10,8 @@ import {
   formatDisplayTime,
   toISODate,
   format,
+  calculateShiftedTimes,
+  calculateDateUpdates,
 } from '../../utils/dateUtils.js';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -19,7 +21,7 @@ export const DayView = ({
   onOpenCreateModal,
   onSelectTask,
 }) => {
-  const { tasksByDate, patchTask } = useTasks();
+  const { tasksByDate, patchTask, rescheduleOccurrence, setCalendarError } = useTasks();
   const scrollContainerRef = useRef(null);
 
   const activeDate = currentDate || new Date();
@@ -42,35 +44,118 @@ export const DayView = ({
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentTimePercent = (currentMinutes / 1440) * 100;
 
+  const parsePayload = (e) => {
+    const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // Plain string fallback
+    }
+    return { taskId: raw };
+  };
+
   const handleDragOver = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
   };
 
-  const handleDrop = async (e, hour = null) => {
+  const handleDropToHour = async (e, hour) => {
     e.preventDefault();
+    e.stopPropagation();
     try {
-      const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
-      if (!raw) return;
+      const parsed = parsePayload(e);
+      if (!parsed || !parsed.taskId) return;
 
-      let taskId = raw;
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed?.taskId) {
-          taskId = parsed.taskId;
-        }
-      } catch {
-        // Plain string fallback
+      const { startTime: newStart, endTime: newEnd } = calculateShiftedTimes(
+        parsed.startTime,
+        parsed.endTime,
+        hour,
+        0,
+        60
+      );
+
+      // Check if dropped onto the exact same position
+      if (
+        !parsed.isAllDay &&
+        toISODate(parsed.startDate) === activeIso &&
+        parsed.startTime === newStart &&
+        parsed.endTime === newEnd
+      ) {
+        return;
       }
 
-      const updates = { startDate: activeIso };
-      if (hour !== null) {
-        updates.startTime = `${String(hour).padStart(2, '0')}:00`;
+      let res;
+      if (parsed.isOccurrence && parsed.originalOccurrenceDate) {
+        res = await rescheduleOccurrence(parsed.masterTaskId || parsed.taskId, parsed.originalOccurrenceDate, {
+          rescheduledDate: activeIso,
+          startTime: newStart,
+          endTime: newEnd,
+          isAllDay: false,
+        });
+      } else {
+        const dateUpdates = calculateDateUpdates(parsed, activeIso);
+        res = await patchTask(parsed.taskId, {
+          ...dateUpdates,
+          startTime: newStart,
+          endTime: newEnd,
+          isAllDay: false,
+        });
       }
-      await patchTask(taskId, updates);
+
+      if (res && !res.success && !res.cancelled) {
+        setCalendarError(res.error || 'Failed to move task. Reverted to original schedule.');
+      }
     } catch (err) {
       console.error('Failed to reschedule task in day view:', err);
+      setCalendarError('Failed to move task due to an unexpected error.');
     }
+  };
+
+  const handleDropToAllDay = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const parsed = parsePayload(e);
+      if (!parsed || !parsed.taskId) return;
+
+      if (parsed.isAllDay && toISODate(parsed.startDate) === activeIso) {
+        return;
+      }
+
+      let res;
+      if (parsed.isOccurrence && parsed.originalOccurrenceDate) {
+        res = await rescheduleOccurrence(parsed.masterTaskId || parsed.taskId, parsed.originalOccurrenceDate, {
+          rescheduledDate: activeIso,
+          startTime: parsed.startTime || null,
+          endTime: parsed.endTime || null,
+          isAllDay: true,
+        });
+      } else {
+        const dateUpdates = calculateDateUpdates(parsed, activeIso);
+        res = await patchTask(parsed.taskId, {
+          ...dateUpdates,
+          startTime: parsed.startTime || null,
+          endTime: parsed.endTime || null,
+          isAllDay: true,
+        });
+      }
+
+      if (res && !res.success && !res.cancelled) {
+        setCalendarError(res.error || 'Failed to move task to all-day. Reverted to original schedule.');
+      }
+    } catch (err) {
+      console.error('Failed to move task to all-day in day view:', err);
+      setCalendarError('Failed to move task due to an unexpected error.');
+    }
+  };
+
+  const handleCanvasDrop = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const hour = Math.min(23, Math.max(0, Math.floor(offsetY / 60)));
+    handleDropToHour(e, hour);
   };
 
   return (
@@ -127,20 +212,30 @@ export const DayView = ({
       {/* =================================================================== */}
       {/* ALL-DAY TASKS SECTION                                               */}
       {/* =================================================================== */}
-      {allDayTasks.length > 0 && (
-        <div className="p-3 bg-slate-50/60 dark:bg-zinc-950/40 border-b border-slate-200/80 dark:border-zinc-800/80 grid grid-cols-[64px_1fr] sm:grid-cols-[80px_1fr] items-start">
-          <span className="text-[11px] font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider text-right pr-3 pt-1">
-            All Day
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {allDayTasks.map((task) => (
-              <div key={task.occurrenceId || task._id} className="min-w-[160px] max-w-xs">
-                <TaskBadge task={task} onClick={onSelectTask} />
-              </div>
-            ))}
-          </div>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={handleDropToAllDay}
+        className="p-3 bg-slate-50/60 dark:bg-zinc-950/40 border-b border-slate-200/80 dark:border-zinc-800/80 grid grid-cols-[64px_1fr] sm:grid-cols-[80px_1fr] items-center transition-colors min-h-[46px]"
+      >
+        <span className="text-[11px] font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider text-right pr-3">
+          All Day
+        </span>
+        <div className="flex flex-wrap gap-2 items-center min-h-[28px]">
+          {allDayTasks.map((task) => (
+            <div key={task.occurrenceId || task._id} className="min-w-[160px] max-w-xs">
+              <TaskBadge task={task} onClick={onSelectTask} />
+            </div>
+          ))}
+          {allDayTasks.length === 0 && (
+            <span className="text-xs text-slate-400 dark:text-zinc-500 italic select-none">
+              Drag task here to make all-day
+            </span>
+          )}
         </div>
-      )}
+      </div>
 
       {/* =================================================================== */}
       {/* 24-HOUR SCROLLABLE CANVAS                                           */}
@@ -176,7 +271,11 @@ export const DayView = ({
           </div>
 
           {/* Timeline canvas */}
-          <div className="relative">
+          <div
+            className="relative"
+            onDragOver={handleDragOver}
+            onDrop={handleCanvasDrop}
+          >
             {/* Hour slot divisions */}
             {HOURS.map((hour) => {
               const hourStr = `${String(hour).padStart(2, '0')}:00`;
@@ -184,7 +283,11 @@ export const DayView = ({
                 <div
                   key={hour}
                   onClick={() => onOpenCreateModal(activeDate, hourStr)}
-                  onDrop={(e) => handleDrop(e, hour)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => handleDropToHour(e, hour)}
                   className="h-[60px] border-b border-slate-100 dark:border-zinc-800/50 hover:bg-slate-50/70 dark:hover:bg-zinc-800/25 cursor-pointer transition-colors relative group"
                   title={`Click to add task at ${formatDisplayTime(hourStr)}`}
                 >

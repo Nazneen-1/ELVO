@@ -11,12 +11,16 @@ import {
   getWeekDays,
   formatViewLabel,
   toISODate,
+  VALID_CALENDAR_VIEWS,
+  getSavedCalendarView,
 } from '../utils/dateUtils.js';
+
+export { VALID_CALENDAR_VIEWS, getSavedCalendarView };
 
 export const useCalendar = (initialDate = new Date(), weekStartsOn = 0, initialView = 'month') => {
   const [currentDate, setCurrentDate] = useState(initialDate);
   const [selectedDate, setSelectedDate] = useState(initialDate);
-  const [viewMode, setViewMode] = useState(initialView); // 'month' | 'week' | 'day'
+  const [viewMode, setViewModeState] = useState(() => getSavedCalendarView(initialView)); // 'month' | 'week' | 'day'
 
   // Step forward depending on active view mode
   const next = useCallback(() => {
@@ -70,8 +74,16 @@ export const useCalendar = (initialDate = new Date(), weekStartsOn = 0, initialV
 
   // Change view mode and synchronize date state if needed
   const changeViewMode = useCallback((newMode) => {
-    setViewMode(newMode);
-    if (newMode === 'day') {
+    const validMode = VALID_CALENDAR_VIEWS.includes(newMode) ? newMode : 'month';
+    setViewModeState(validMode);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.setItem('elvo_calendar_view_mode', validMode);
+      }
+    } catch (err) {
+      console.error('Failed to save calendar view mode preference:', err);
+    }
+    if (validMode === 'day') {
       setCurrentDate(selectedDate);
     }
   }, [selectedDate]);

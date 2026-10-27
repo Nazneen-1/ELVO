@@ -84,8 +84,8 @@ export const TaskFormModal = ({
       setDescription(editTask.description || '');
       setStartDate(editTask.startDate ? toISODate(editTask.startDate) : toISODate(new Date()));
       setDueDate(editTask.dueDate ? toISODate(editTask.dueDate) : '');
-      setStartTime(editTask.startTime || '');
-      setEndTime(editTask.endTime || '');
+      setStartTime(editTask.isAllDay ? '' : editTask.startTime || '');
+      setEndTime(editTask.isAllDay ? '' : editTask.endTime || '');
       setPriority(editTask.priority || 'Medium');
       setColor(editTask.color || 'indigo');
       setStatus(editTask.status || 'To Do');

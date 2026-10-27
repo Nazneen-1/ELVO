@@ -14,6 +14,7 @@ export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   mongodbUri: process.env.MONGODB_URI || '',
   MONGODB_URI: process.env.MONGODB_URI || '',
+  mongoUri: process.env.MONGODB_URI || '',
   jwtSecret: process.env.JWT_SECRET || 'dev_jwt_secret_change_in_production_32chars',
   jwtExpire: process.env.JWT_EXPIRE || '7d',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
@@ -26,4 +27,6 @@ export const config = {
   // Gmail shortcut
   gmailUser: process.env.GMAIL_USER || '',
   gmailPass: process.env.GMAIL_PASS || '',
+  // External reminder scheduler secret
+  reminderSchedulerSecret: process.env.REMINDER_SCHEDULER_SECRET || '',
 };

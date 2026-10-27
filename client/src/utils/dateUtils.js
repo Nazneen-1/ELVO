@@ -338,6 +338,120 @@ export const computeTimedTasksLayout = (tasks = []) => {
   return { allDayTasks, timedTasks };
 };
 
+/**
+ * Convert HH:mm string to minutes from midnight (0 - 1439).
+ */
+export const timeToMinutes = (timeStr) => {
+  if (!timeStr || typeof timeStr !== 'string') return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+};
+
+/**
+ * Convert minutes from midnight (0 - 1439) to HH:mm string.
+ */
+export const minutesToTime = (totalMinutes) => {
+  const clamped = Math.max(0, Math.min(1439, Math.round(totalMinutes)));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+/**
+ * Calculate shifted start and end times preserving the original task duration.
+ * Ensures endTime is always after startTime and strictly within 23:59 on the same day.
+ */
+export const calculateShiftedTimes = (
+  originalStartTime,
+  originalEndTime,
+  newStartHour,
+  newStartMinute = 0,
+  fallbackDurationMinutes = 60
+) => {
+  let newStartMinutes = Math.min(1439, Math.max(0, newStartHour * 60 + newStartMinute));
+  let duration = fallbackDurationMinutes;
+
+  if (originalStartTime && originalEndTime) {
+    const origStart = timeToMinutes(originalStartTime);
+    const origEnd = timeToMinutes(originalEndTime);
+    if (origEnd > origStart) {
+      duration = origEnd - origStart;
+    }
+  }
+
+  // Minimum duration of 15 minutes
+  duration = Math.max(15, duration);
+  let newEndMinutes = newStartMinutes + duration;
+
+  // Cap at 23:59 (1439 min)
+  if (newEndMinutes > 1439) {
+    newEndMinutes = 1439;
+    if (newEndMinutes - newStartMinutes < 15) {
+      newStartMinutes = Math.max(0, newEndMinutes - 15);
+    }
+  }
+
+  return {
+    startTime: minutesToTime(newStartMinutes),
+    endTime: minutesToTime(newEndMinutes),
+  };
+};
+
+/**
+ * Shift a YYYY-MM-DD date string by a given number of days using UTC arithmetic.
+ */
+export const shiftCalendarDate = (dateStr, diffDays) => {
+  if (!dateStr || diffDays === 0) return dateStr;
+  const iso = toISODate(dateStr);
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return dateStr;
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + diffDays));
+  return dt.toISOString().split('T')[0];
+};
+
+/**
+ * Given a dragged task payload and a target start date ISO, compute the appropriate
+ * date updates preserving duration between startDate, endDate, and dueDate.
+ */
+export const calculateDateUpdates = (parsedTask, targetDateIso) => {
+  const updates = { startDate: targetDateIso };
+  const origStartIso = toISODate(parsedTask?.startDate);
+  if (origStartIso && targetDateIso && origStartIso !== targetDateIso) {
+    const [y1, m1, d1] = origStartIso.split('-').map(Number);
+    const [y2, m2, d2] = targetDateIso.split('-').map(Number);
+    const diffDays = Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
+    if (parsedTask.dueDate) {
+      updates.dueDate = shiftCalendarDate(parsedTask.dueDate, diffDays);
+    }
+    if (parsedTask.endDate) {
+      updates.endDate = shiftCalendarDate(parsedTask.endDate, diffDays);
+    }
+  }
+  return updates;
+};
+
+export const VALID_CALENDAR_VIEWS = ['month', 'week', 'day'];
+
+/**
+ * Resolve the persisted calendar view mode preference from localStorage with safe fallback.
+ */
+export const getSavedCalendarView = (
+  fallback = 'month',
+  storage = typeof window !== 'undefined' && window.localStorage ? window.localStorage : null
+) => {
+  try {
+    if (storage) {
+      const saved = storage.getItem('elvo_calendar_view_mode');
+      if (saved && VALID_CALENDAR_VIEWS.includes(saved)) {
+        return saved;
+      }
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return VALID_CALENDAR_VIEWS.includes(fallback) ? fallback : 'month';
+};
+
 // Re-export recurrence engine utilities for calendar consumption
 export {
   daysInMonth,

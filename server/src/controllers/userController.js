@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import { isValidTimezone } from '../utils/reminderScheduler.js';
 
 // @desc    Get current user profile & settings
 // @route   GET /api/users/profile
@@ -44,6 +45,18 @@ export const updateUserProfile = async (req, res, next) => {
       }
       if (preferences.defaultLandingView && ['dashboard', 'calendar', 'tasks'].includes(preferences.defaultLandingView)) {
         user.preferences.defaultLandingView = preferences.defaultLandingView;
+      }
+      if (preferences.timezone !== undefined) {
+        if (preferences.timezone && isValidTimezone(preferences.timezone)) {
+          user.preferences.timezone = preferences.timezone.trim();
+        } else if (preferences.timezone === null || preferences.timezone === '') {
+          user.preferences.timezone = 'UTC';
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid IANA timezone identifier',
+          });
+        }
       }
       user.markModified('preferences');
     }

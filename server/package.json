@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "migrate:reminder-indexes": "node src/scripts/migrateReminderIndexes.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

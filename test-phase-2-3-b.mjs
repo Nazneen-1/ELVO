@@ -15,6 +15,7 @@ import { config } from './server/src/config/env.js';
 import Task from './server/src/models/Task.js';
 import User from './server/src/models/User.js';
 import { updateTaskOccurrence, updateTask } from './server/src/controllers/taskController.js';
+import { assertSafeTestDatabase, getSafeTestUri } from './server/src/config/testDbGuard.js';
 
 const testResults = {
   passed: 0,
@@ -147,9 +148,11 @@ console.log('\n\x1b[1mSuite 3: Real MongoDB Database & Permission Integration Te
 
 let dbConnected = false;
 try {
-  await mongoose.connect(config.mongodbUri);
+  const mongoUri = getSafeTestUri(process.env.TEST_MONGODB_URI);
+  assertSafeTestDatabase(mongoUri);
+  await mongoose.connect(mongoUri);
   dbConnected = true;
-  console.log('  \x1b[32m✔\x1b[0m Connected to MongoDB for live integration tests');
+  console.log('  \x1b[32m✔\x1b[0m Connected to isolated test MongoDB successfully');
 } catch (err) {
   console.log('  \x1b[33m⚠\x1b[0m MongoDB connection failed; skipping live DB tests:', err.message);
 }

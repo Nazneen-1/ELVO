@@ -30,17 +30,37 @@ export const TaskBadge = ({ task, onClick }) => {
     e.stopPropagation();
     const payload = JSON.stringify({
       taskId: task._id,
+      occurrenceId: task.occurrenceId || null,
       startDate: task.startDate,
+      startTime: task.startTime || null,
+      endTime: task.endTime || null,
+      isAllDay: Boolean(task.isAllDay || !task.startTime),
+      isOccurrence: Boolean(task.isOccurrence),
+      masterTaskId: task.masterTaskId || task._id,
+      originalOccurrenceDate:
+        task.originalOccurrenceDate ||
+        task.occurrenceDate ||
+        (task.occurrenceId ? task.occurrenceId.split('__')[1] : null),
+      occurrenceDate: task.occurrenceDate || null,
+      dueDate: task.dueDate || null,
+      endDate: task.endDate || null,
+      title: task.title,
     });
     e.dataTransfer.setData('application/json', payload);
-    e.dataTransfer.setData('text/plain', task._id);
+    e.dataTransfer.setData('text/plain', task.occurrenceId || task._id);
     e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
   };
 
   return (
     <div
       draggable
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onClick={(e) => {
         e.stopPropagation();
         onClick(task);

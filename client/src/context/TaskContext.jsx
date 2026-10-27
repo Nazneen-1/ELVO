@@ -4,9 +4,11 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  useRef,
 } from 'react';
 import { taskService } from '../services/taskService.js';
 import { toISODate } from '../utils/dateUtils.js';
+import { ConflictConfirmationModal } from '../components/common/ConflictConfirmationModal.jsx';
 
 const TaskContext = createContext();
 
@@ -19,6 +21,26 @@ export const TaskProvider = ({ children }) => {
   const [selectedTask, setSelectedTask] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [calendarError, setCalendarErrorState] = useState(null);
+  const calendarErrorTimeoutRef = useRef(null);
+  const [conflictModalState, setConflictModalState] = useState({
+    isOpen: false,
+    conflicts: [],
+    onProceed: null,
+    onCancel: null,
+  });
+
+  const setCalendarError = useCallback((msg) => {
+    if (calendarErrorTimeoutRef.current) {
+      clearTimeout(calendarErrorTimeoutRef.current);
+    }
+    setCalendarErrorState(msg);
+    if (msg) {
+      calendarErrorTimeoutRef.current = setTimeout(() => {
+        setCalendarErrorState(null);
+      }, 5000);
+    }
+  }, []);
 
   // Fetch tasks
   const fetchTasks = useCallback(async (params = {}) => {
@@ -44,6 +66,38 @@ export const TaskProvider = ({ children }) => {
         return { success: true, data: response.data };
       }
     } catch (error) {
+      if (error.response?.status === 409 && error.response?.data?.conflictCode === 'TASK_CONFLICT') {
+        const conflicts = error.response.data.conflicts || [];
+        return new Promise((resolve) => {
+          setConflictModalState({
+            isOpen: true,
+            conflicts,
+            onProceed: async () => {
+              try {
+                const retryResponse = await taskService.createTask({ ...taskData, confirmed: true });
+                if (retryResponse.success) {
+                  setTasks((prev) => [...prev, retryResponse.data]);
+                  setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                  resolve({ success: true, data: retryResponse.data });
+                } else {
+                  setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                  resolve({ success: false, error: 'Failed to create task after confirmation' });
+                }
+              } catch (retryErr) {
+                setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                resolve({
+                  success: false,
+                  error: retryErr.response?.data?.message || 'Failed to create task after confirmation',
+                });
+              }
+            },
+            onCancel: () => {
+              setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+              resolve({ success: false, cancelled: true, error: 'Operation cancelled by user' });
+            },
+          });
+        });
+      }
       console.error('Failed to create task:', error);
       return {
         success: false,
@@ -66,6 +120,43 @@ export const TaskProvider = ({ children }) => {
         return { success: true, data: response.data };
       }
     } catch (error) {
+      if (error.response?.status === 409 && error.response?.data?.conflictCode === 'TASK_CONFLICT') {
+        const conflicts = error.response.data.conflicts || [];
+        return new Promise((resolve) => {
+          setConflictModalState({
+            isOpen: true,
+            conflicts,
+            onProceed: async () => {
+              try {
+                const retryResponse = await taskService.updateTask(id, { ...taskData, confirmed: true });
+                if (retryResponse.success) {
+                  setTasks((prev) =>
+                    prev.map((t) => (t._id === id ? retryResponse.data : t))
+                  );
+                  if (selectedTask && selectedTask._id === id) {
+                    setSelectedTask(retryResponse.data);
+                  }
+                  setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                  resolve({ success: true, data: retryResponse.data });
+                } else {
+                  setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                  resolve({ success: false, error: 'Failed to update task after confirmation' });
+                }
+              } catch (retryErr) {
+                setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                resolve({
+                  success: false,
+                  error: retryErr.response?.data?.message || 'Failed to update task after confirmation',
+                });
+              }
+            },
+            onCancel: () => {
+              setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+              resolve({ success: false, cancelled: true, error: 'Operation cancelled by user' });
+            },
+          });
+        });
+      }
       console.error('Failed to update task:', error);
       return {
         success: false,
@@ -217,6 +308,128 @@ export const TaskProvider = ({ children }) => {
     return updateOccurrence(masterTaskId, occurrenceDate, { action: 'skip' });
   };
 
+  // Reschedule a single occurrence of a recurring task
+  const rescheduleOccurrence = async (
+    masterTaskId,
+    originalOccurrenceDate,
+    { rescheduledDate, startTime, endTime, isAllDay, confirmed } = {}
+  ) => {
+    try {
+      const response = await taskService.rescheduleOccurrence(masterTaskId, originalOccurrenceDate, {
+        rescheduledDate,
+        startTime,
+        endTime,
+        isAllDay,
+        confirmed,
+      });
+
+      if (response.success) {
+        const occId = `${masterTaskId}__${originalOccurrenceDate}`;
+        const [y, m, d] = rescheduledDate.split('-').map(Number);
+        const newDateUTC = new Date(Date.UTC(y, m - 1, d));
+
+        setTasks((prev) => {
+          let updated = false;
+          const next = prev.map((t) => {
+            if (
+              t.occurrenceId === occId ||
+              (t.masterTaskId === masterTaskId && t.originalOccurrenceDate === originalOccurrenceDate)
+            ) {
+              updated = true;
+              return {
+                ...t,
+                startDate: newDateUTC,
+                occurrenceDate: rescheduledDate,
+                originalOccurrenceDate,
+                isRescheduled: true,
+                ...(startTime !== undefined ? { startTime } : {}),
+                ...(endTime !== undefined ? { endTime } : {}),
+                ...(isAllDay !== undefined ? { isAllDay } : {}),
+              };
+            }
+            if (t._id === masterTaskId && !t.isOccurrence) {
+              return response.data;
+            }
+            return t;
+          });
+
+          // If this occurrence was moved into the visible window from outside
+          if (!updated) {
+            next.push({
+              ...response.data,
+              _id: response.data._id,
+              occurrenceId: occId,
+              originalOccurrenceDate,
+              occurrenceDate: rescheduledDate,
+              isOccurrence: true,
+              isRescheduled: true,
+              masterTaskId,
+              startDate: newDateUTC,
+              status: response.occurrence?.status || response.data.status || 'To Do',
+              ...(startTime !== undefined ? { startTime } : {}),
+              ...(endTime !== undefined ? { endTime } : {}),
+              ...(isAllDay !== undefined ? { isAllDay } : {}),
+            });
+          }
+
+          return next;
+        });
+
+        if (
+          selectedTask &&
+          (selectedTask.occurrenceId === occId ||
+            (selectedTask.masterTaskId === masterTaskId &&
+              selectedTask.originalOccurrenceDate === originalOccurrenceDate))
+        ) {
+          setSelectedTask((prev) => ({
+            ...prev,
+            startDate: newDateUTC,
+            occurrenceDate: rescheduledDate,
+            originalOccurrenceDate,
+            isRescheduled: true,
+            ...(startTime !== undefined ? { startTime } : {}),
+            ...(endTime !== undefined ? { endTime } : {}),
+            ...(isAllDay !== undefined ? { isAllDay } : {}),
+            recurrenceExceptions: response.data.recurrenceExceptions,
+          }));
+        }
+
+        return { success: true, data: response.data, occurrence: response.occurrence };
+      }
+      return { success: false, error: 'Failed to reschedule occurrence' };
+    } catch (error) {
+      if (error.response?.status === 409 && error.response?.data?.conflictCode === 'TASK_CONFLICT') {
+        const conflicts = error.response.data.conflicts || [];
+        return new Promise((resolve) => {
+          setConflictModalState({
+            isOpen: true,
+            conflicts,
+            onProceed: async () => {
+              const retryRes = await rescheduleOccurrence(masterTaskId, originalOccurrenceDate, {
+                rescheduledDate,
+                startTime,
+                endTime,
+                isAllDay,
+                confirmed: true,
+              });
+              setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+              resolve(retryRes);
+            },
+            onCancel: () => {
+              setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+              resolve({ success: false, cancelled: true, error: 'Operation cancelled by user' });
+            },
+          });
+        });
+      }
+      console.error('Failed to reschedule occurrence:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to reschedule occurrence',
+      };
+    }
+  };
+
   // Clear all filters
   const clearFilters = useCallback(() => {
     setFilterStatus('all');
@@ -276,20 +489,68 @@ export const TaskProvider = ({ children }) => {
             const response = await taskService.patchTask(id, fields);
             if (response.success) {
               setTasks((prev) =>
-                prev.map((t) => (t._id === id ? response.data : t))
+                prev.map((t) => {
+                  if (t.isOccurrence) return t;
+                  return t._id === id ? response.data : t;
+                })
               );
               if (selectedTask && selectedTask._id === id) {
                 setSelectedTask(response.data);
               }
               return { success: true, data: response.data };
             }
+            return { success: false, error: 'Failed to update task' };
           } catch (err) {
-            return { success: false, error: err.message };
+            if (err.response?.status === 409 && err.response?.data?.conflictCode === 'TASK_CONFLICT') {
+              const conflicts = err.response.data.conflicts || [];
+              return new Promise((resolve) => {
+                setConflictModalState({
+                  isOpen: true,
+                  conflicts,
+                  onProceed: async () => {
+                    try {
+                      const retryResponse = await taskService.patchTask(id, { ...fields, confirmed: true });
+                      if (retryResponse.success) {
+                        setTasks((prev) =>
+                          prev.map((t) => {
+                            if (t.isOccurrence) return t;
+                            return t._id === id ? retryResponse.data : t;
+                          })
+                        );
+                        if (selectedTask && selectedTask._id === id) {
+                          setSelectedTask(retryResponse.data);
+                        }
+                        setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                        resolve({ success: true, data: retryResponse.data });
+                      } else {
+                        setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                        resolve({ success: false, error: 'Failed to update task after confirmation' });
+                      }
+                    } catch (retryErr) {
+                      setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                      resolve({
+                        success: false,
+                        error: retryErr.response?.data?.message || 'Failed to update task after confirmation',
+                      });
+                    }
+                  },
+                  onCancel: () => {
+                    setConflictModalState({ isOpen: false, conflicts: [], onProceed: null, onCancel: null });
+                    resolve({ success: false, cancelled: true, error: 'Operation cancelled by user' });
+                  },
+                });
+              });
+            }
+            const errMsg = err.response?.data?.message || err.message || 'Failed to update task';
+            return { success: false, error: errMsg };
           }
         },
         deleteTask,
         updateOccurrence,
         skipOccurrence,
+        rescheduleOccurrence,
+        calendarError,
+        setCalendarError,
         addComment,
         toggleSubtask,
         selectedTask,
@@ -301,6 +562,12 @@ export const TaskProvider = ({ children }) => {
       }}
     >
       {children}
+      <ConflictConfirmationModal
+        isOpen={conflictModalState.isOpen}
+        conflicts={conflictModalState.conflicts}
+        onProceed={conflictModalState.onProceed}
+        onCancel={conflictModalState.onCancel}
+      />
     </TaskContext.Provider>
   );
 };

@@ -49,6 +49,8 @@ export const NotificationPopover = () => {
         return <Clock className="w-4 h-4 text-rose-600 dark:text-rose-400" />;
       case 'comment':
         return <MessageSquare className="w-4 h-4 text-sky-600 dark:text-sky-400" />;
+      case 'task_assigned':
+        return <Users className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />;
       default:
         return <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />;
     }

@@ -35,6 +35,11 @@ const notificationSchema = new mongoose.Schema(
       ref: 'Task',
       default: null,
     },
+    occurrenceKey: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     relatedWorkspaceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
@@ -47,6 +52,7 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ userId: 1, createdAt: -1 });
+notificationSchema.index({ userId: 1, relatedTaskId: 1, occurrenceKey: 1 });
 
 const Notification = mongoose.model('Notification', notificationSchema);
 

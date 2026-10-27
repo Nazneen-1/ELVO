@@ -40,6 +40,11 @@ const userSchema = new mongoose.Schema(
         enum: ['dashboard', 'calendar', 'tasks'],
         default: 'dashboard',
       },
+      timezone: {
+        type: String,
+        default: 'UTC',
+        trim: true,
+      },
     },
   },
   {

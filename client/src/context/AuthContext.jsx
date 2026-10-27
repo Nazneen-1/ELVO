@@ -20,7 +20,26 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.getMe();
       if (response.success) {
-        setUser(response.data.user);
+        const currentUser = response.data.user;
+        setUser(currentUser);
+        if (currentUser && !currentUser.preferences?.timezone) {
+          try {
+            const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (detectedTz) {
+              authService.updatePreferences({ timezone: detectedTz }).then((res) => {
+                if (res.success && res.data?.preferences) {
+                  setUser((prev) => (prev ? {
+                    ...prev,
+                    preferences: {
+                      ...prev.preferences,
+                      timezone: detectedTz,
+                    },
+                  } : prev));
+                }
+              }).catch(() => {});
+            }
+          } catch {}
+        }
       }
     } catch (err) {
       console.error('Failed to load user:', err);
@@ -69,6 +88,24 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('elvo_token', newToken);
         setToken(newToken);
         setUser(loggedInUser);
+        if (loggedInUser && !loggedInUser.preferences?.timezone) {
+          try {
+            const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (detectedTz) {
+              authService.updatePreferences({ timezone: detectedTz }).then((res) => {
+                if (res.success && res.data?.preferences) {
+                  setUser((prev) => (prev ? {
+                    ...prev,
+                    preferences: {
+                      ...prev.preferences,
+                      timezone: detectedTz,
+                    },
+                  } : prev));
+                }
+              }).catch(() => {});
+            }
+          } catch {}
+        }
         return { success: true, user: loggedInUser };
       }
     } catch (err) {

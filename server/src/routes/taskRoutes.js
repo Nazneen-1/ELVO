@@ -10,6 +10,8 @@ import {
   deleteTask,
   addComment,
   updateTaskOccurrence,
+  rescheduleTaskOccurrence,
+  checkTaskConflicts,
 } from '../controllers/taskController.js';
 import { protect } from '../middleware/authMiddleware.js';
 
@@ -21,12 +23,18 @@ router.use(protect);
 // Specific routes before param route
 router.get('/stats', getTaskStats);
 router.get('/analytics', getAnalytics);
+router.post('/check-conflicts', checkTaskConflicts);
 
 router.route('/')
   .get(getTasks)
   .post(createTask);
 
 router.post('/:id/comments', addComment);
+
+// Reschedule occurrence routes (specific routes before generic occurrence param routes)
+router.post('/:id/occurrences/:date/reschedule', rescheduleTaskOccurrence);
+router.post('/:id/occurrences/reschedule', rescheduleTaskOccurrence);
+router.patch('/:id/occurrences/:date/reschedule', rescheduleTaskOccurrence);
 
 // Occurrence actions (complete, reopen, skip)
 router.post('/:id/occurrences/:date?', updateTaskOccurrence);

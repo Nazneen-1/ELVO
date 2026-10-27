@@ -56,9 +56,28 @@ const recurrenceExceptionSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    rescheduledDate: {
+      type: String, // 'YYYY-MM-DD'
+      default: null,
+      trim: true,
+    },
+    startTime: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    endTime: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    isAllDay: {
+      type: Boolean,
+      default: null,
+    },
     action: {
       type: String,
-      enum: ['completed', 'cancelled', 'modified', 'skipped'],
+      enum: ['completed', 'cancelled', 'modified', 'skipped', 'rescheduled'],
       default: 'completed',
     },
     status: {
@@ -227,6 +246,12 @@ const taskSchema = new mongoose.Schema(
       type: [activitySchema],
       default: [],
     },
+    // Checkpoint timestamp for Stage 3.4 recurring reminder replenishment
+    lastReminderReplenishedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -318,6 +343,7 @@ taskSchema.pre('validate', function(next) {
 taskSchema.index({ userId: 1, startDate: 1, status: 1 });
 taskSchema.index({ workspaceId: 1, startDate: 1 });
 taskSchema.index({ userId: 1, 'recurrence.frequency': 1, startDate: 1 });
+taskSchema.index({ 'recurrenceExceptions.rescheduledDate': 1 });
 
 const Task = mongoose.model('Task', taskSchema);
 

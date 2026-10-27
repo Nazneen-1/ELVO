@@ -74,5 +74,28 @@ export const taskService = {
     });
     return response.data;
   },
+
+  // Reschedule a single occurrence of a recurring task
+  rescheduleOccurrence: async (id, date, { rescheduledDate, startTime, endTime, isAllDay, confirmed } = {}) => {
+    const response = await api.post(`/tasks/${id}/occurrences/${date}/reschedule`, {
+      rescheduledDate,
+      startTime,
+      endTime,
+      isAllDay,
+      ...(confirmed ? { confirmed: true } : {}),
+    });
+    return response.data;
+  },
+
+  // Authoritative preflight conflict check
+  checkConflicts: async ({ candidate, excludeTaskId, excludeOccurrenceDate, workspaceId } = {}) => {
+    const response = await api.post('/tasks/check-conflicts', {
+      candidate,
+      excludeTaskId,
+      excludeOccurrenceDate,
+      workspaceId,
+    });
+    return response.data;
+  },
 };
 

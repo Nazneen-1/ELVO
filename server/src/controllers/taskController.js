@@ -6,6 +6,11 @@ import {
   generateOccurrenceDates,
   daysInMonth,
 } from '../utils/recurrenceEngine.js';
+import { detectTaskConflicts } from '../utils/conflictDetector.js';
+import { syncTaskReminders, cleanupTaskReminders } from '../utils/reminderScheduler.js';
+import { notifyTaskAssignment, notifyTaskComment } from '../utils/collaborativeNotifications.js';
+
+const SUPPORTED_REMINDER_MINUTES = [5, 10, 15, 30, 60, 120, 1440];
 
 // Helper to check user access to a workspace
 const verifyWorkspaceAccess = async (workspaceId, userId) => {
@@ -167,6 +172,18 @@ export const getTasks = async (req, res, next) => {
         ];
       }
       dateOrClauses.push(recurringMatch);
+
+      // 3. Recurring series with an occurrence rescheduled into this window
+      if (start && end) {
+        dateOrClauses.push({
+          'recurrence.frequency': { $in: ['daily', 'weekly', 'monthly'] },
+          'recurrenceExceptions': {
+            $elemMatch: {
+              rescheduledDate: { $gte: start, $lte: end },
+            },
+          },
+        });
+      }
 
       const dateFilter = { $or: dateOrClauses };
 
@@ -400,13 +417,26 @@ export const getAnalytics = async (req, res, next) => {
 // @access  Private
 export const getTaskById = async (req, res, next) => {
   try {
-    const task = await Task.findOne({
+    let task = await Task.findOne({
       _id: req.params.id,
       $or: [{ userId: req.user._id }, { assignedTo: req.user._id }],
     })
       .populate('userId', 'name email')
       .populate('assignedTo', 'name email')
       .populate('comments.userId', 'name email');
+
+    if (!task) {
+      const candidateTask = await Task.findById(req.params.id)
+        .populate('userId', 'name email')
+        .populate('assignedTo', 'name email')
+        .populate('comments.userId', 'name email');
+      if (candidateTask && candidateTask.workspaceId) {
+        const hasAccess = await verifyWorkspaceAccess(candidateTask.workspaceId, req.user._id);
+        if (hasAccess) {
+          task = candidateTask;
+        }
+      }
+    }
 
     if (!task) {
       return res.status(404).json({
@@ -470,6 +500,24 @@ export const createTask = async (req, res, next) => {
       cleanRecurrence.until = recurrence.until ? parseDateOnlyUTC(recurrence.until) : null;
     }
 
+    if (reminder !== undefined) {
+      if (!reminder || typeof reminder !== 'object' || Array.isArray(reminder)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Reminder must be an object with enabled and minutesBefore properties',
+        });
+      }
+      if (reminder.minutesBefore !== undefined) {
+        const mins = Number(reminder.minutesBefore);
+        if (!SUPPORTED_REMINDER_MINUTES.includes(mins)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid reminder lead time. Supported intervals: 5, 10, 15, 30, 60, 120, 1440 minutes',
+          });
+        }
+      }
+    }
+
     // Server-side validation (authoritative safeguard)
     const validationError = validateDateTimes({
       startDate: parsedStart,
@@ -481,6 +529,55 @@ export const createTask = async (req, res, next) => {
     });
     if (validationError) {
       return res.status(400).json({ success: false, message: validationError });
+    }
+
+    const candidateWorkspace = (workspaceId && workspaceId !== 'personal') ? workspaceId : null;
+    if (candidateWorkspace) {
+      const hasAccess = await verifyWorkspaceAccess(candidateWorkspace, req.user._id);
+      if (!hasAccess) {
+        return res.status(403).json({ success: false, message: 'Access denied to this workspace' });
+      }
+    }
+
+    const candidateAssignee = (assignedTo && assignedTo !== 'personal') ? assignedTo : null;
+    if (candidateAssignee) {
+      if (candidateWorkspace) {
+        const hasAssigneeAccess = await verifyWorkspaceAccess(candidateWorkspace, candidateAssignee);
+        if (!hasAssigneeAccess) {
+          return res.status(400).json({
+            success: false,
+            message: 'Assigned user is not a member of the selected workspace',
+          });
+        }
+      } else if (candidateAssignee.toString() !== req.user._id.toString()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot assign a personal task to another user',
+        });
+      }
+    }
+
+    const conflicts = await detectTaskConflicts({
+      userId: req.user._id,
+      workspaceId: candidateWorkspace,
+      candidate: {
+        title: title.trim(),
+        startDate: parsedStart,
+        endDate: parsedEnd,
+        startTime: startTime || null,
+        endTime: endTime || null,
+        isAllDay: isAllDay !== undefined ? Boolean(isAllDay) : Boolean(!startTime && !endTime),
+        workspaceId: candidateWorkspace,
+      },
+    });
+
+    if (conflicts.length > 0 && req.body.confirmed !== true) {
+      return res.status(409).json({
+        success: false,
+        conflictCode: 'TASK_CONFLICT',
+        message: 'Task conflicts detected. Confirmation required to proceed.',
+        conflicts,
+      });
     }
 
     const task = await Task.create({
@@ -511,6 +608,16 @@ export const createTask = async (req, res, next) => {
         },
       ],
     });
+
+    await syncTaskReminders(task);
+
+    if (task.assignedTo) {
+      await notifyTaskAssignment({
+        task,
+        actor: req.user,
+        prevAssigneeId: null,
+      });
+    }
 
     return res.status(201).json({
       success: true,
@@ -562,6 +669,25 @@ export const updateTask = async (req, res, next) => {
     ];
 
     const prevStatus = task.status;
+    const prevAssigneeId = task.assignedTo?.toString() || null;
+
+    if (req.body.reminder !== undefined) {
+      if (!req.body.reminder || typeof req.body.reminder !== 'object' || Array.isArray(req.body.reminder)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Reminder must be an object with enabled and minutesBefore properties',
+        });
+      }
+      if (req.body.reminder.minutesBefore !== undefined) {
+        const mins = Number(req.body.reminder.minutesBefore);
+        if (!SUPPORTED_REMINDER_MINUTES.includes(mins)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid reminder lead time. Supported intervals: 5, 10, 15, 30, 60, 120, 1440 minutes',
+          });
+        }
+      }
+    }
 
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -578,6 +704,11 @@ export const updateTask = async (req, res, next) => {
             frequency: ['daily', 'weekly', 'monthly'].includes(rec.frequency) ? rec.frequency : 'none',
             interval: Math.max(Number(rec.interval) || 1, 1),
             until: rec.until ? parseDateOnlyUTC(rec.until) : null,
+          };
+        } else if (field === 'reminder') {
+          task.reminder = {
+            enabled: req.body.reminder.enabled !== undefined ? Boolean(req.body.reminder.enabled) : task.reminder?.enabled || false,
+            minutesBefore: req.body.reminder.minutesBefore !== undefined ? Number(req.body.reminder.minutesBefore) : task.reminder?.minutesBefore || 15,
           };
         } else {
           task[field] = req.body[field];
@@ -598,6 +729,30 @@ export const updateTask = async (req, res, next) => {
       return res.status(400).json({ success: false, message: updateValidationError });
     }
 
+    const conflicts = await detectTaskConflicts({
+      userId: req.user._id,
+      workspaceId: task.workspaceId,
+      candidate: {
+        title: task.title,
+        startDate: task.startDate,
+        endDate: task.endDate,
+        startTime: task.startTime || null,
+        endTime: task.endTime || null,
+        isAllDay: Boolean(task.isAllDay),
+        workspaceId: task.workspaceId,
+      },
+      excludeTaskId: task._id,
+    });
+
+    if (conflicts.length > 0 && req.body.confirmed !== true) {
+      return res.status(409).json({
+        success: false,
+        conflictCode: 'TASK_CONFLICT',
+        message: 'Task conflicts detected. Confirmation required to proceed.',
+        conflicts,
+      });
+    }
+
     if (req.body.status && req.body.status !== prevStatus) {
       if (!task.activity) task.activity = [];
       task.activity.push({
@@ -607,7 +762,33 @@ export const updateTask = async (req, res, next) => {
       });
     }
 
+    if (task.assignedTo && task.assignedTo.toString() !== prevAssigneeId) {
+      if (task.workspaceId) {
+        const hasAssigneeAccess = await verifyWorkspaceAccess(task.workspaceId, task.assignedTo);
+        if (!hasAssigneeAccess) {
+          return res.status(400).json({
+            success: false,
+            message: 'Assigned user is not a member of the workspace',
+          });
+        }
+      } else if (task.assignedTo.toString() !== task.userId.toString()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot assign a personal task to another user',
+        });
+      }
+    }
+
     await task.save();
+    await syncTaskReminders(task);
+
+    if (task.assignedTo && task.assignedTo.toString() !== prevAssigneeId) {
+      await notifyTaskAssignment({
+        task,
+        actor: req.user,
+        prevAssigneeId,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -656,7 +837,26 @@ export const patchTask = async (req, res, next) => {
       'recurrence',
       'recurrenceExceptions',
       'recurringMasterId',
+      'reminder',
     ];
+
+    if (req.body.reminder !== undefined) {
+      if (!req.body.reminder || typeof req.body.reminder !== 'object' || Array.isArray(req.body.reminder)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Reminder must be an object with enabled and minutesBefore properties',
+        });
+      }
+      if (req.body.reminder.minutesBefore !== undefined) {
+        const mins = Number(req.body.reminder.minutesBefore);
+        if (!SUPPORTED_REMINDER_MINUTES.includes(mins)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid reminder lead time. Supported intervals: 5, 10, 15, 30, 60, 120, 1440 minutes',
+          });
+        }
+      }
+    }
 
     let updated = false;
 
@@ -682,6 +882,10 @@ export const patchTask = async (req, res, next) => {
               seenDates.add(ex.date);
               cleanExceptions.push({
                 date: ex.date,
+                rescheduledDate: ex.rescheduledDate || null,
+                startTime: ex.startTime || null,
+                endTime: ex.endTime || null,
+                isAllDay: ex.isAllDay !== undefined ? ex.isAllDay : null,
                 action: ex.action || 'completed',
                 status: ex.status || 'Done',
                 overrides: ex.overrides || {},
@@ -689,6 +893,11 @@ export const patchTask = async (req, res, next) => {
             }
           });
           task.recurrenceExceptions = cleanExceptions;
+        } else if (field === 'reminder') {
+          task.reminder = {
+            enabled: req.body.reminder.enabled !== undefined ? Boolean(req.body.reminder.enabled) : task.reminder?.enabled || false,
+            minutesBefore: req.body.reminder.minutesBefore !== undefined ? Number(req.body.reminder.minutesBefore) : task.reminder?.minutesBefore || 15,
+          };
         } else {
           task[field] = req.body[field];
         }
@@ -716,6 +925,40 @@ export const patchTask = async (req, res, next) => {
       return res.status(400).json({ success: false, message: patchValidationError });
     }
 
+    const isScheduleOrTitleUpdated =
+      req.body.title !== undefined ||
+      req.body.startDate !== undefined ||
+      req.body.endDate !== undefined ||
+      req.body.startTime !== undefined ||
+      req.body.endTime !== undefined ||
+      req.body.isAllDay !== undefined;
+
+    if (isScheduleOrTitleUpdated) {
+      const conflicts = await detectTaskConflicts({
+        userId: req.user._id,
+        workspaceId: task.workspaceId,
+        candidate: {
+          title: task.title,
+          startDate: task.startDate,
+          endDate: task.endDate,
+          startTime: task.startTime || null,
+          endTime: task.endTime || null,
+          isAllDay: Boolean(task.isAllDay),
+          workspaceId: task.workspaceId,
+        },
+        excludeTaskId: task._id,
+      });
+
+      if (conflicts.length > 0 && req.body.confirmed !== true) {
+        return res.status(409).json({
+          success: false,
+          conflictCode: 'TASK_CONFLICT',
+          message: 'Task conflicts detected. Confirmation required to proceed.',
+          conflicts,
+        });
+      }
+    }
+
     if (req.body.status && req.body.status !== prevStatus) {
       if (!task.activity) task.activity = [];
       task.activity.push({
@@ -726,6 +969,7 @@ export const patchTask = async (req, res, next) => {
     }
 
     await task.save();
+    await syncTaskReminders(task);
 
     return res.status(200).json({
       success: true,
@@ -747,13 +991,20 @@ export const addComment = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Comment text is required' });
     }
 
-    const task = await Task.findOne({
-      _id: req.params.id,
-      $or: [{ userId: req.user._id }, { assignedTo: req.user._id }],
-    });
-
+    const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    let hasAccess =
+      task.userId.toString() === req.user._id.toString() ||
+      (task.assignedTo && task.assignedTo.toString() === req.user._id.toString());
+    if (!hasAccess && task.workspaceId) {
+      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, message: 'Not authorized to comment on this task' });
     }
 
     const newComment = {
@@ -773,6 +1024,12 @@ export const addComment = async (req, res, next) => {
     });
 
     await task.save();
+
+    await notifyTaskComment({
+      task,
+      actor: req.user,
+      commentText: text.trim(),
+    });
 
     return res.status(201).json({
       success: true,
@@ -799,6 +1056,8 @@ export const deleteTask = async (req, res, next) => {
         message: 'Task not found',
       });
     }
+
+    await cleanupTaskReminders(task._id);
 
     return res.status(200).json({
       success: true,
@@ -916,6 +1175,9 @@ export const updateTaskOccurrence = async (req, res, next) => {
     let targetStatus = 'Done';
 
     const normalizedAct = (action || '').toLowerCase().trim();
+    if (['reschedule', 'rescheduled'].includes(normalizedAct)) {
+      return rescheduleTaskOccurrence(req, res, next);
+    }
     if (['skip', 'skipped', 'cancel', 'cancelled'].includes(normalizedAct)) {
       targetAction = 'skipped';
       targetStatus = 'Done';
@@ -968,6 +1230,7 @@ export const updateTaskOccurrence = async (req, res, next) => {
     });
 
     await task.save();
+    await syncTaskReminders(task);
 
     return res.status(200).json({
       success: true,
@@ -983,5 +1246,275 @@ export const updateTaskOccurrence = async (req, res, next) => {
   } catch (error) {
     console.error('Update Task Occurrence Error:', error);
     next(error);
+  }
+};
+
+// @desc    Reschedule a single occurrence of a recurring task
+// @route   POST /api/tasks/:id/occurrences/:date/reschedule
+// @route   POST /api/tasks/:id/occurrences/reschedule
+// @access  Private
+export const rescheduleTaskOccurrence = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const originalDate = req.params.date || req.body.originalDate || req.body.date;
+    const { rescheduledDate, newDate, startTime, endTime, isAllDay } = req.body;
+    const targetDate = rescheduledDate || newDate;
+
+    // 1. Validate master task ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid task ID',
+      });
+    }
+
+    // 2. Validate original occurrence date format
+    if (!originalDate || typeof originalDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(originalDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid original occurrence date in YYYY-MM-DD format is required',
+      });
+    }
+
+    const [oy, om, od] = originalDate.split('-').map(Number);
+    if (om < 1 || om > 12 || od < 1 || od > daysInMonth(oy, om)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid calendar date for original occurrence',
+      });
+    }
+
+    // 3. Validate destination date format
+    if (!targetDate || typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid destination date in YYYY-MM-DD format is required',
+      });
+    }
+
+    const [dy, dm, dd] = targetDate.split('-').map(Number);
+    if (dm < 1 || dm > 12 || dd < 1 || dd > daysInMonth(dy, dm)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid calendar date for destination date',
+      });
+    }
+
+    // 4. Validate time fields if provided
+    if (startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid start time format. Expected HH:mm (24-hour)',
+      });
+    }
+    if (endTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid end time format. Expected HH:mm (24-hour)',
+      });
+    }
+    if (startTime && endTime) {
+      if (compareTime(endTime, startTime) <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'End time must be later than start time.',
+        });
+      }
+    }
+
+    // 5. Find master task
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: 'Task not found',
+      });
+    }
+
+    // 6. Enforce user & workspace ownership / permissions
+    const isOwner = task.userId && task.userId.toString() === req.user._id.toString();
+    const isAssigned = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
+    let hasAccess = isOwner || isAssigned;
+
+    if (!hasAccess && task.workspaceId) {
+      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to this task',
+      });
+    }
+
+    // 7. Verify the task is a recurring series
+    if (!task.recurrence || !task.recurrence.frequency || task.recurrence.frequency === 'none') {
+      return res.status(400).json({
+        success: false,
+        message: 'Task is not a recurring series',
+      });
+    }
+
+    // 8. Verify original date is within series range
+    const seriesStart = toCalendarDateString(task.startDate);
+    if (originalDate < seriesStart) {
+      return res.status(400).json({
+        success: false,
+        message: 'Original occurrence date is earlier than series start date',
+      });
+    }
+    if (task.recurrence.until) {
+      const seriesUntil = toCalendarDateString(task.recurrence.until);
+      if (seriesUntil && originalDate > seriesUntil) {
+        return res.status(400).json({
+          success: false,
+          message: 'Original occurrence date is after recurrence end date',
+        });
+      }
+    }
+
+    // 9. Verify original date actually belongs to the series
+    const matchingOccurrences = generateOccurrenceDates({
+      startDate: task.startDate,
+      frequency: task.recurrence.frequency,
+      interval: task.recurrence.interval || 1,
+      windowStart: originalDate,
+      windowEnd: originalDate,
+      until: task.recurrence.until,
+    });
+    if (!matchingOccurrences.includes(originalDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Original date does not belong to this recurrence series',
+      });
+    }
+
+    // 9.5 Authoritative conflict check on destination date
+    const candidateStartTime = startTime !== undefined ? (startTime || null) : (task.startTime || null);
+    const candidateEndTime = endTime !== undefined ? (endTime || null) : (task.endTime || null);
+    const candidateIsAllDay = isAllDay !== undefined ? Boolean(isAllDay) : Boolean(task.isAllDay);
+
+    const conflicts = await detectTaskConflicts({
+      userId: req.user._id,
+      workspaceId: task.workspaceId,
+      candidate: {
+        title: task.title,
+        startDate: targetDate,
+        endDate: null,
+        startTime: candidateStartTime,
+        endTime: candidateEndTime,
+        isAllDay: candidateIsAllDay,
+        workspaceId: task.workspaceId,
+      },
+      excludeTaskId: task._id,
+      excludeOccurrenceDate: originalDate,
+    });
+
+    if (conflicts.length > 0 && req.body.confirmed !== true) {
+      return res.status(409).json({
+        success: false,
+        conflictCode: 'TASK_CONFLICT',
+        message: 'Task conflicts detected. Confirmation required to proceed.',
+        conflicts,
+      });
+    }
+
+    // 10. Upsert exception for this original occurrence date
+    if (!task.recurrenceExceptions) {
+      task.recurrenceExceptions = [];
+    }
+
+    const exIndex = task.recurrenceExceptions.findIndex((ex) => ex.date === originalDate);
+    const timeOverrides = {};
+    if (startTime !== undefined) timeOverrides.startTime = startTime || null;
+    if (endTime !== undefined) timeOverrides.endTime = endTime || null;
+    if (isAllDay !== undefined) timeOverrides.isAllDay = Boolean(isAllDay);
+
+    if (exIndex >= 0) {
+      const existing = task.recurrenceExceptions[exIndex];
+      existing.rescheduledDate = targetDate;
+      if (startTime !== undefined) existing.startTime = startTime || null;
+      if (endTime !== undefined) existing.endTime = endTime || null;
+      if (isAllDay !== undefined) existing.isAllDay = Boolean(isAllDay);
+      if (existing.action === 'skipped' || existing.action === 'cancelled') {
+        existing.action = 'rescheduled';
+      }
+      existing.overrides = {
+        ...(existing.overrides || {}),
+        ...timeOverrides,
+      };
+    } else {
+      task.recurrenceExceptions.push({
+        date: originalDate,
+        rescheduledDate: targetDate,
+        startTime: startTime || null,
+        endTime: endTime || null,
+        isAllDay: isAllDay !== undefined ? Boolean(isAllDay) : null,
+        action: 'rescheduled',
+        status: task.status || 'To Do',
+        overrides: timeOverrides,
+      });
+    }
+
+    // 11. Record activity without changing master task status, start/end dates, or recurrence rules
+    if (!task.activity) task.activity = [];
+    task.activity.push({
+      action: 'Occurrence rescheduled',
+      details: `Occurrence on ${originalDate} rescheduled to ${targetDate} by ${req.user?.name || 'User'}`,
+      timestamp: new Date(),
+    });
+
+    await task.save();
+    await syncTaskReminders(task);
+
+    const finalEx = task.recurrenceExceptions.find((ex) => ex.date === originalDate);
+
+    return res.status(200).json({
+      success: true,
+      data: task,
+      occurrence: {
+        occurrenceId: `${task._id}__${originalDate}`,
+        originalOccurrenceDate: originalDate,
+        occurrenceDate: targetDate,
+        masterTaskId: task._id.toString(),
+        isRescheduled: true,
+        action: finalEx?.action || 'rescheduled',
+        status: finalEx?.status || task.status || 'To Do',
+        overrides: finalEx?.overrides || {},
+      },
+    });
+  } catch (error) {
+    console.error('Reschedule Task Occurrence Error:', error);
+    next(error);
+  }
+};
+
+// @desc    Preflight conflict check
+// @route   POST /api/tasks/check-conflicts
+// @access  Private
+export const checkTaskConflicts = async (req, res, next) => {
+  try {
+    const { candidate, excludeTaskId, excludeOccurrenceDate, workspaceId } = req.body;
+    if (!candidate) {
+      return res.status(400).json({ success: false, message: 'Candidate task is required' });
+    }
+    const targetWorkspace = workspaceId !== undefined ? workspaceId : candidate.workspaceId;
+    const conflicts = await detectTaskConflicts({
+      userId: req.user._id,
+      workspaceId: targetWorkspace,
+      candidate,
+      excludeTaskId,
+      excludeOccurrenceDate,
+    });
+    return res.status(200).json({
+      success: true,
+      hasConflicts: conflicts.length > 0,
+      conflicts,
+    });
+  } catch (err) {
+    if (err.statusCode === 403) {
+      return res.status(403).json({ success: false, message: err.message });
+    }
+    next(err);
   }
 };

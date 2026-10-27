@@ -4,7 +4,13 @@ import { Plus, Clock } from 'lucide-react';
 import { TimedTaskCard } from './TimedTaskCard.jsx';
 import { TaskBadge } from './TaskBadge.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
-import { computeTimedTasksLayout, formatDisplayTime, toISODate } from '../../utils/dateUtils.js';
+import {
+  computeTimedTasksLayout,
+  formatDisplayTime,
+  toISODate,
+  calculateShiftedTimes,
+  calculateDateUpdates,
+} from '../../utils/dateUtils.js';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
@@ -15,7 +21,7 @@ export const WeekView = ({
   onOpenCreateModal,
   onSelectTask,
 }) => {
-  const { tasksByDate, patchTask } = useTasks();
+  const { tasksByDate, patchTask, rescheduleOccurrence, setCalendarError } = useTasks();
   const scrollContainerRef = useRef(null);
   const [activeMobileDayIndex, setActiveMobileDayIndex] = useState(0);
   const [dragOverDayIso, setDragOverDayIso] = useState(null);
@@ -44,6 +50,18 @@ export const WeekView = ({
   const currentTimePercent = (currentMinutes / 1440) * 100;
   const todayIso = toISODate(now);
 
+  const parsePayload = (e) => {
+    const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // Plain string fallback
+    }
+    return { taskId: raw };
+  };
+
   const handleDragOver = (e, dayIso) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -53,37 +71,112 @@ export const WeekView = ({
   };
 
   const handleDragLeave = (e) => {
-    e.preventDefault();
-    setDragOverDayIso(null);
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverDayIso(null);
+    }
   };
 
-  const handleDrop = async (e, targetDay) => {
+  const handleDropToHour = async (e, targetDay, hour) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOverDayIso(null);
     try {
-      const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
-      if (!raw) return;
+      const parsed = parsePayload(e);
+      if (!parsed || !parsed.taskId) return;
 
-      let taskId = raw;
-      let fromDate = null;
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed?.taskId) {
-          taskId = parsed.taskId;
-          fromDate = parsed.startDate;
-        }
-      } catch {
-        // Plain string fallback
-      }
+      const targetIso = targetDay.isoString;
+      const { startTime: newStart, endTime: newEnd } = calculateShiftedTimes(
+        parsed.startTime,
+        parsed.endTime,
+        hour,
+        0,
+        60
+      );
 
-      if (fromDate && toISODate(fromDate) === targetDay.isoString) {
+      // Check if dropped onto the exact same position
+      if (
+        !parsed.isAllDay &&
+        toISODate(parsed.startDate) === targetIso &&
+        parsed.startTime === newStart &&
+        parsed.endTime === newEnd
+      ) {
         return;
       }
 
-      await patchTask(taskId, { startDate: targetDay.isoString });
+      let res;
+      if (parsed.isOccurrence && parsed.originalOccurrenceDate) {
+        res = await rescheduleOccurrence(parsed.masterTaskId || parsed.taskId, parsed.originalOccurrenceDate, {
+          rescheduledDate: targetIso,
+          startTime: newStart,
+          endTime: newEnd,
+          isAllDay: false,
+        });
+      } else {
+        const dateUpdates = calculateDateUpdates(parsed, targetIso);
+        res = await patchTask(parsed.taskId, {
+          ...dateUpdates,
+          startTime: newStart,
+          endTime: newEnd,
+          isAllDay: false,
+        });
+      }
+
+      if (res && !res.success && !res.cancelled) {
+        setCalendarError(res.error || 'Failed to move task. Reverted to original schedule.');
+      }
     } catch (err) {
-      console.error('Failed to reschedule task via week drop:', err);
+      console.error('Failed to move task to timed slot in week view:', err);
+      setCalendarError('Failed to move task due to an unexpected error.');
     }
+  };
+
+  const handleDropToAllDay = async (e, targetDay) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverDayIso(null);
+    try {
+      const parsed = parsePayload(e);
+      if (!parsed || !parsed.taskId) return;
+
+      const targetIso = targetDay.isoString;
+
+      // If already all-day on the same day, do nothing
+      if (parsed.isAllDay && toISODate(parsed.startDate) === targetIso) {
+        return;
+      }
+
+      let res;
+      if (parsed.isOccurrence && parsed.originalOccurrenceDate) {
+        res = await rescheduleOccurrence(parsed.masterTaskId || parsed.taskId, parsed.originalOccurrenceDate, {
+          rescheduledDate: targetIso,
+          startTime: parsed.startTime || null,
+          endTime: parsed.endTime || null,
+          isAllDay: true,
+        });
+      } else {
+        const dateUpdates = calculateDateUpdates(parsed, targetIso);
+        res = await patchTask(parsed.taskId, {
+          ...dateUpdates,
+          startTime: parsed.startTime || null,
+          endTime: parsed.endTime || null,
+          isAllDay: true,
+        });
+      }
+
+      if (res && !res.success && !res.cancelled) {
+        setCalendarError(res.error || 'Failed to move task to all-day. Reverted to original schedule.');
+      }
+    } catch (err) {
+      console.error('Failed to move task to all-day in week view:', err);
+      setCalendarError('Failed to move task due to an unexpected error.');
+    }
+  };
+
+  const handleColumnDrop = (e, targetDay) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const hour = Math.min(23, Math.max(0, Math.floor(offsetY / 60)));
+    handleDropToHour(e, targetDay, hour);
   };
 
   return (
@@ -198,7 +291,12 @@ export const WeekView = ({
             <div
               key={`allday-${day.isoString}`}
               onClick={() => onSelectDate(day.date)}
-              className="p-1 border-r border-slate-200/80 dark:border-zinc-800/80 last:border-r-0 space-y-1"
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => handleDropToAllDay(e, day)}
+              className="p-1 border-r border-slate-200/80 dark:border-zinc-800/80 last:border-r-0 space-y-1 transition-colors hover:bg-slate-100/40 dark:hover:bg-zinc-800/20"
             >
               {allDayTasks.map((task) => (
                 <TaskBadge key={task.occurrenceId || task._id} task={task} onClick={onSelectTask} />
@@ -258,7 +356,7 @@ export const WeekView = ({
                 key={day.isoString}
                 onDragOver={(e) => handleDragOver(e, day.isoString)}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, day)}
+                onDrop={(e) => handleColumnDrop(e, day)}
                 className={clsx(
                   'relative border-r border-slate-200/80 dark:border-zinc-800/80 last:border-r-0 transition-colors',
                   isDragOver && 'bg-indigo-50/60 dark:bg-indigo-950/50'
@@ -274,6 +372,11 @@ export const WeekView = ({
                         onSelectDate(day.date);
                         onOpenCreateModal(day.date, hourStr);
                       }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDrop={(e) => handleDropToHour(e, day, hour)}
                       className="h-[60px] border-b border-slate-100 dark:border-zinc-800/50 hover:bg-slate-50/70 dark:hover:bg-zinc-800/30 cursor-pointer transition-colors"
                       title={`Click to add task at ${formatDisplayTime(hourStr)} on ${day.dayName}`}
                     />
@@ -320,7 +423,14 @@ export const WeekView = ({
             <div className="md:hidden flex flex-col">
               {/* Mobile All-Day Bar */}
               {allDayTasks.length > 0 && (
-                <div className="p-3 bg-slate-50 dark:bg-zinc-950/50 border-b border-slate-200/80 dark:border-zinc-800/80 space-y-1.5">
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => handleDropToAllDay(e, activeDay)}
+                  className="p-3 bg-slate-50 dark:bg-zinc-950/50 border-b border-slate-200/80 dark:border-zinc-800/80 space-y-1.5"
+                >
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                     All-Day Tasks ({allDayTasks.length})
                   </span>
@@ -367,6 +477,11 @@ export const WeekView = ({
                           onSelectDate(activeDay.date);
                           onOpenCreateModal(activeDay.date, hourStr);
                         }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => handleDropToHour(e, activeDay, hour)}
                         className="h-[60px] border-b border-slate-100 dark:border-zinc-800/50 active:bg-slate-100 dark:active:bg-zinc-800/50 transition-colors"
                       />
                     );

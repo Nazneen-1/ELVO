@@ -16,3 +16,5 @@ services:
         sync: false
       - key: CLIENT_URL
         sync: false
+      - key: REMINDER_SCHEDULER_SECRET
+        sync: false

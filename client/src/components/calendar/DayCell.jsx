@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { clsx } from 'clsx';
 import { Plus } from 'lucide-react';
 import { TaskBadge } from './TaskBadge.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
-import { toISODate } from '../../utils/dateUtils.js';
+import { toISODate, calculateDateUpdates } from '../../utils/dateUtils.js';
 
 export const DayCell = ({
   day,
@@ -14,8 +14,9 @@ export const DayCell = ({
   onSelectTask,
 }) => {
   const { isCurrentMonth, isToday, dayNumber } = day;
-  const { patchTask } = useTasks();
+  const { patchTask, rescheduleOccurrence, setCalendarError } = useTasks();
   const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
 
   const visibleTasks = tasks.slice(0, 3);
   const overflowCount = tasks.length - 3;
@@ -27,25 +28,33 @@ export const DayCell = ({
 
   const handleDragEnter = (e) => {
     e.preventDefault();
+    dragCounter.current += 1;
     setIsDragOver(true);
   };
 
   const handleDragLeave = (e) => {
     e.preventDefault();
-    setIsDragOver(false);
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDragOver(false);
+    }
   };
 
   const handleDrop = async (e) => {
     e.preventDefault();
+    dragCounter.current = 0;
     setIsDragOver(false);
+
     try {
       const raw = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
       if (!raw) return;
 
       let taskId = raw;
       let fromDate = null;
+      let parsed = null;
       try {
-        const parsed = JSON.parse(raw);
+        parsed = JSON.parse(raw);
         if (parsed?.taskId) {
           taskId = parsed.taskId;
           fromDate = parsed.startDate;
@@ -58,13 +67,37 @@ export const DayCell = ({
       if (fromDate && toISODate(fromDate) === day.isoString) {
         return;
       }
-      if (tasks.some((t) => t._id === taskId)) {
-        return;
+
+      // Only prevent drop if THIS EXACT occurrence or non-recurring task is already in this cell
+      if (parsed?.isOccurrence) {
+        const occId = parsed.occurrenceId || `${parsed.masterTaskId || taskId}__${parsed.originalOccurrenceDate}`;
+        const alreadyHere = tasks.some(
+          (t) =>
+            t.occurrenceId === occId ||
+            (t.masterTaskId === (parsed.masterTaskId || taskId) &&
+              t.originalOccurrenceDate === parsed.originalOccurrenceDate)
+        );
+        if (alreadyHere) return;
+      } else {
+        const alreadyHere = tasks.some((t) => t._id === taskId && !t.isOccurrence);
+        if (alreadyHere) return;
       }
 
-      await patchTask(taskId, { startDate: day.isoString });
+      let res;
+      if (parsed?.isOccurrence && parsed?.originalOccurrenceDate) {
+        res = await rescheduleOccurrence(parsed.masterTaskId || taskId, parsed.originalOccurrenceDate, {
+          rescheduledDate: day.isoString,
+        });
+      } else {
+        res = await patchTask(taskId, calculateDateUpdates(parsed, day.isoString));
+      }
+
+      if (res && !res.success && !res.cancelled) {
+        setCalendarError(res.error || 'Failed to move task. Reverted to original schedule.');
+      }
     } catch (err) {
       console.error('Failed to reschedule task:', err);
+      setCalendarError('Failed to move task due to an unexpected error.');
     }
   };
 

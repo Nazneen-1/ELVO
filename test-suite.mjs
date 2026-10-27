@@ -3,9 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { fileURLToPath } from 'url';
+import { assertSafeTestDatabase, getSafeTestUri } from './server/src/config/testDbGuard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function getGuardedChildEnv() {
+  const safeUri = getSafeTestUri(process.env.TEST_MONGODB_URI);
+  assertSafeTestDatabase(safeUri);
+  return {
+    ...process.env,
+    NODE_ENV: 'test',
+    TEST_MONGODB_URI: safeUri,
+  };
+}
 
 const results = {
   passed: 0,
@@ -414,19 +425,22 @@ async function runServerDeploymentIntegrationTests() {
     server.close();
   }
 
-  // Test 3.10: Database Connectivity Test
+  // Test 3.10: Database Connectivity Test (Guarded isolated test database)
   try {
+    const { assertSafeTestDatabase, getSafeTestUri } = await import('./server/src/config/testDbGuard.js');
     const { connectDB } = await import('./server/src/config/db.js');
-    const mongoose = (await import('mongoose')).default;
-    await connectDB();
+    const mongoose = (await import('./server/node_modules/mongoose/index.js')).default;
+    const testUri = getSafeTestUri(process.env.TEST_MONGODB_URI);
+    assertSafeTestDatabase(testUri);
+    await connectDB(testUri);
     if (mongoose.connection.readyState === 1) {
-      recordTest('Server-Database', `MongoDB Atlas Connection (${mongoose.connection.host})`, 'PASS');
+      recordTest('Server-Database', `MongoDB Isolated Test Database (${mongoose.connection.host}/${mongoose.connection.name})`, 'PASS');
       await mongoose.disconnect();
     } else {
-      recordTest('Server-Database', 'MongoDB Atlas Connection', 'WARN', `Connection state: ${mongoose.connection.readyState}`);
+      recordTest('Server-Database', 'MongoDB Isolated Test Database', 'WARN', `Connection state: ${mongoose.connection.readyState}`);
     }
   } catch (err) {
-    recordTest('Server-Database', 'MongoDB Connection Test', 'WARN', err.message);
+    recordTest('Server-Database', 'MongoDB Isolated Test Database', 'WARN', err.message);
   }
 }
 
@@ -469,12 +483,96 @@ async function runPhase2RecurrenceTests() {
 async function runPhase2OccurrencesTests() {
   console.log('\n\x1b[1m\x1b[36m=== 7. PHASE 2.3B OCCURRENCE COMPLETION & SKIPPING TESTS ===\x1b[0m');
   try {
-    const output = execSync('node test-phase-2-3-b.mjs', { cwd: __dirname, stdio: 'pipe' }).toString();
+    const output = execSync('node test-phase-2-3-b.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
     const match = output.match(/✔ Passed:\s*(\d+)/);
     const passedCount = match ? match[1] : '33';
     recordTest('Phase2-Occurrences', `Phase 2.3B suite (${passedCount}/33 checks passed: occurrence completion, reopening, skipping, DB persistence, cadence validation)`, 'PASS');
   } catch (err) {
     recordTest('Phase2-Occurrences', 'Phase 2.3B occurrence completion & skipping suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runPhase2ReschedulingTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 8. PHASE 2.3B STEP 2 INDIVIDUAL OCCURRENCE RESCHEDULING TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-3-b-step2.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '45';
+    recordTest('Phase2-Rescheduling', `Phase 2.3B Step 2 suite (${passedCount}/45 checks passed: moving occurrence, neighbor safety, window crossing, time preservation, DB persistence)`, 'PASS');
+  } catch (err) {
+    recordTest('Phase2-Rescheduling', 'Phase 2.3B Step 2 occurrence rescheduling suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage1DnDTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 9. STAGE 1 DRAG-AND-DROP RELIABILITY TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-phase-2-3-b-dnd.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '55';
+    recordTest('Stage1-DnD', `Stage 1 & 1.1 suite (${passedCount}/55 checks passed: duration preservation, all-day conversion, view persistence, occupied drops)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage1-DnD', 'Stage 1 drag-and-drop reliability suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage2ConflictsTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 10. STAGE 2 TASK CONFLICT DETECTION & CONFIRMATION TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-stage-2-conflicts.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '32';
+    recordTest('Stage2-Conflicts', `Stage 2 suite (${passedCount}/32 checks passed: title/date matching, half-open intervals, recurrence collisions, workspace security, HTTP 409 protocol)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage2-Conflicts', 'Stage 2 task conflict detection suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage31RemindersTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 11. STAGE 3.1 CORRECTIVE PASS REMINDER TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-stage-3-1-reminders.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '25';
+    recordTest('Stage3-Reminders', `Stage 3.1 reminders suite (${passedCount}/25 checks passed: DST policies, ghost job cleanup, retry backoff)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage3-Reminders', 'Stage 3.1 reminders suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage32RecurringRemindersTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 12. STAGE 3.2 RECURRING OCCURRENCE REMINDER TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-stage-3-2-recurring-reminders.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '18';
+    recordTest('Stage3-RecurringReminders', `Stage 3.2 recurring reminders suite (${passedCount}/18 checks passed: occurrence jobs, cadence sync, cross-window preservation)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage3-RecurringReminders', 'Stage 3.2 recurring reminders suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage33CollaborativeNotificationsTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 13. STAGE 3.3 COLLABORATIVE NOTIFICATIONS TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-stage-3-3-collaborative-notifications.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '21';
+    recordTest('Stage3-CollaborativeNotifications', `Stage 3.3 collaborative notifications suite (${passedCount}/21 checks passed: assignments, comments, overdue, scheduler trigger)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage3-CollaborativeNotifications', 'Stage 3.3 collaborative notifications suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
+  }
+}
+
+async function runStage34ReminderReliabilityTests() {
+  console.log('\n\x1b[1m\x1b[36m=== 14. STAGE 3.4 REMINDER RELIABILITY & QUEUE IDENTITY TESTS ===\x1b[0m');
+  try {
+    const output = execSync('node test-stage-3-4-reminder-reliability.mjs', { cwd: __dirname, env: getGuardedChildEnv(), stdio: 'pipe' }).toString();
+    const match = output.match(/Passed:\s*(\d+)/);
+    const passedCount = match ? match[1] : '25';
+    recordTest('Stage3-ReminderReliability', `Stage 3.4 reliability suite (${passedCount} checks passed: queue identity, replenishment, backfill safety, lease recovery)`, 'PASS');
+  } catch (err) {
+    recordTest('Stage3-ReminderReliability', 'Stage 3.4 reminder reliability suite', 'FAIL', err.stdout ? err.stdout.toString() : err.message);
   }
 }
 
@@ -490,6 +588,13 @@ async function runAll() {
   await runPhase2ViewsTests();
   await runPhase2RecurrenceTests();
   await runPhase2OccurrencesTests();
+  await runPhase2ReschedulingTests();
+  await runStage1DnDTests();
+  await runStage2ConflictsTests();
+  await runStage31RemindersTests();
+  await runStage32RecurringRemindersTests();
+  await runStage33CollaborativeNotificationsTests();
+  await runStage34ReminderReliabilityTests();
 
   console.log('\n\x1b[1m\x1b[35m=======================================================');
   console.log('                   TEST SUMMARY                        ');

@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import { generateToken } from '../utils/generateToken.js';
+import { isValidTimezone } from '../utils/reminderScheduler.js';
 
 // @desc    Register a new user
 // @route   POST /api/auth/register
@@ -145,7 +146,7 @@ export const getMe = async (req, res, next) => {
 // @access  Private
 export const updatePreferences = async (req, res, next) => {
   try {
-    const { theme, firstDayOfWeek, defaultLandingView } = req.body;
+    const { theme, firstDayOfWeek, defaultLandingView, timezone } = req.body;
 
     const user = await User.findById(req.user._id);
     if (!user) {
@@ -163,6 +164,18 @@ export const updatePreferences = async (req, res, next) => {
     }
     if (defaultLandingView && ['dashboard', 'calendar', 'tasks'].includes(defaultLandingView)) {
       user.preferences.defaultLandingView = defaultLandingView;
+    }
+    if (timezone !== undefined) {
+      if (timezone && isValidTimezone(timezone)) {
+        user.preferences.timezone = timezone.trim();
+      } else if (timezone === null || timezone === '') {
+        user.preferences.timezone = 'UTC';
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid IANA timezone identifier',
+        });
+      }
     }
 
     user.markModified('preferences');

@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { toISODate } from '../utils/dateUtils.js';
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek } from 'date-fns';
-import { Sparkles, Briefcase } from 'lucide-react';
+import { Sparkles, Briefcase, AlertCircle, X } from 'lucide-react';
 
 export const CalendarPage = () => {
   const { user } = useAuth();
@@ -31,7 +31,7 @@ export const CalendarPage = () => {
     next,
     prev,
     goToToday,
-  } = useCalendar(new Date(), weekStartsOn, 'month');
+  } = useCalendar(new Date(), weekStartsOn);
 
   const {
     fetchTasks,
@@ -42,6 +42,8 @@ export const CalendarPage = () => {
     setIsFormOpen,
     isDetailOpen,
     setIsDetailOpen,
+    calendarError,
+    setCalendarError,
   } = useTasks();
 
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
@@ -198,6 +200,22 @@ export const CalendarPage = () => {
         task={selectedTask}
         onEdit={handleEditTask}
       />
+      {/* Calendar Error Toast */}
+      {calendarError && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-md p-3 rounded-xl bg-rose-50 dark:bg-rose-950/95 border border-rose-200 dark:border-rose-900 text-xs text-rose-800 dark:text-rose-200 shadow-xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+            <span className="font-medium">{calendarError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCalendarError(null)}
+            className="p-1 rounded text-rose-500 hover:text-rose-700 dark:hover:text-rose-300 transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

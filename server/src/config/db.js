@@ -1,8 +1,13 @@
 import mongoose from 'mongoose';
 import { config } from './env.js';
 
-export const connectDB = async () => {
-  const uri = config.MONGODB_URI || config.mongodbUri || process.env.MONGODB_URI;
+export const connectDB = async (customUri = null) => {
+  let uri = customUri || config.MONGODB_URI || config.mongodbUri || process.env.MONGODB_URI;
+
+  if (config.nodeEnv === 'test' || process.env.NODE_ENV === 'test') {
+    const { getSafeTestUri } = await import('./testDbGuard.js');
+    uri = getSafeTestUri(customUri || process.env.TEST_MONGODB_URI);
+  }
 
   if (!uri) {
     console.error('❌ MONGODB_URI is not defined in .env file!');

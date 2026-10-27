@@ -184,11 +184,11 @@ export const generateOccurrenceDates = ({
 export const projectTaskOccurrences = (task, windowStart, windowEnd) => {
   const plainTask = typeof task.toObject === 'function' ? task.toObject({ virtuals: true }) : { ...task };
   const frequency = plainTask.recurrence?.frequency || 'none';
+  const winStartStr = toISODateOnly(windowStart);
+  const winEndStr = toISODateOnly(windowEnd);
 
   if (frequency === 'none') {
     const taskDateStr = toISODateOnly(plainTask.startDate);
-    const winStartStr = toISODateOnly(windowStart);
-    const winEndStr = toISODateOnly(windowEnd);
     if (taskDateStr >= winStartStr && taskDateStr <= winEndStr) {
       return [
         {
@@ -221,30 +221,78 @@ export const projectTaskOccurrences = (task, windowStart, windowEnd) => {
   });
 
   const masterIdStr = plainTask._id ? plainTask._id.toString() : '';
+  const result = [];
 
-  return occurrenceDates
-    .map((occDate) => {
-      const ex = exceptionMap.get(occDate);
-      if (ex && (ex.action === 'skipped' || ex.action === 'cancelled')) {
-        return null;
-      }
+  // 1. Process naturally generated occurrence dates within the requested window
+  occurrenceDates.forEach((occDate) => {
+    const ex = exceptionMap.get(occDate);
+    // If skipped or cancelled, omit
+    if (ex && (ex.action === 'skipped' || ex.action === 'cancelled')) {
+      return;
+    }
+    // If rescheduled to a different date, do NOT render on original date
+    if (ex && ex.rescheduledDate && ex.rescheduledDate !== occDate) {
+      return;
+    }
 
-      const [y, m, d] = occDate.split('-').map(Number);
-      const occurrenceStartDateUTC = new Date(Date.UTC(y, m - 1, d));
+    const [y, m, d] = occDate.split('-').map(Number);
+    const occurrenceStartDateUTC = new Date(Date.UTC(y, m - 1, d));
 
-      return {
+    result.push({
+      ...plainTask,
+      _id: plainTask._id,
+      occurrenceId: `${masterIdStr}__${occDate}`,
+      occurrenceDate: occDate,
+      originalOccurrenceDate: occDate,
+      masterTaskId: masterIdStr,
+      isOccurrence: true,
+      startDate: occurrenceStartDateUTC,
+      status: ex?.status || plainTask.status,
+      ...(ex?.overrides || {}),
+    });
+  });
+
+  // 2. Project rescheduled occurrences whose destination date falls within the requested window
+  exceptions.forEach((ex) => {
+    if (!ex || !ex.rescheduledDate || ex.rescheduledDate === ex.date) return;
+    if (ex.action === 'skipped' || ex.action === 'cancelled') return;
+
+    const destDate = ex.rescheduledDate;
+    if (destDate >= winStartStr && destDate <= winEndStr) {
+      const [y, m, d] = destDate.split('-').map(Number);
+      const destStartDateUTC = new Date(Date.UTC(y, m - 1, d));
+
+      result.push({
         ...plainTask,
         _id: plainTask._id,
-        occurrenceId: `${masterIdStr}__${occDate}`,
-        occurrenceDate: occDate,
+        occurrenceId: `${masterIdStr}__${ex.date}`,
+        occurrenceDate: destDate,
+        originalOccurrenceDate: ex.date,
+        isRescheduled: true,
         masterTaskId: masterIdStr,
         isOccurrence: true,
-        startDate: occurrenceStartDateUTC,
-        status: ex?.status || plainTask.status,
-        ...(ex?.overrides || {}),
-      };
-    })
-    .filter(Boolean);
+        startDate: destStartDateUTC,
+        status: ex.status || plainTask.status,
+        startTime:
+          ex.startTime !== undefined && ex.startTime !== null
+            ? ex.startTime
+            : ex.overrides?.startTime || plainTask.startTime,
+        endTime:
+          ex.endTime !== undefined && ex.endTime !== null
+            ? ex.endTime
+            : ex.overrides?.endTime || plainTask.endTime,
+        isAllDay:
+          ex.isAllDay !== undefined && ex.isAllDay !== null
+            ? ex.isAllDay
+            : ex.overrides?.isAllDay !== undefined
+            ? ex.overrides.isAllDay
+            : plainTask.isAllDay,
+        ...(ex.overrides || {}),
+      });
+    }
+  });
+
+  return result;
 };
 
 export const expandTasksForWindow = (tasks = [], windowStart, windowEnd) => {
