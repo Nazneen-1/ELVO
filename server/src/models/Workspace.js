@@ -18,6 +18,71 @@ const workspaceMemberSchema = new mongoose.Schema({
   },
 });
 
+const workspaceInvitationSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    lowercase: true,
+    trim: true,
+    required: true,
+  },
+  role: {
+    type: String,
+    enum: ['admin', 'member', 'viewer'],
+    default: 'member',
+  },
+  token: {
+    type: String,
+    required: true,
+    index: true,
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'accepted', 'declined', 'revoked', 'expired'],
+    default: 'pending',
+  },
+  invitedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+  invitedAt: {
+    type: Date,
+    default: Date.now,
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+  },
+});
+
+const workspaceActivitySchema = new mongoose.Schema({
+  action: {
+    type: String,
+    required: true,
+  },
+  details: {
+    type: String,
+    default: '',
+  },
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  userName: {
+    type: String,
+    default: '',
+  },
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {},
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
 const workspaceSchema = new mongoose.Schema(
   {
     name: {
@@ -43,6 +108,30 @@ const workspaceSchema = new mongoose.Schema(
       type: String,
       unique: true,
       index: true,
+    },
+    inviteCodeActive: {
+      type: Boolean,
+      default: true,
+    },
+    inviteCodeExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    invitations: [workspaceInvitationSchema],
+    activity: [workspaceActivitySchema],
+    isArchived: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    archivedAt: {
+      type: Date,
+      default: null,
+    },
+    archivedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     color: {
       type: String,

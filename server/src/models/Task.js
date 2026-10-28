@@ -10,6 +10,11 @@ const subtaskSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  assignee: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
 });
 
 const commentSchema = new mongoose.Schema({
@@ -31,6 +36,10 @@ const commentSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
+  },
+  updatedAt: {
+    type: Date,
+    default: null,
   },
 });
 
@@ -114,6 +123,15 @@ const taskSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
       set: (v) => (v === '' || v === 'personal' || !v ? null : v),
+    },
+    assignees: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+      ],
+      default: [],
     },
     title: {
       type: String,
@@ -252,6 +270,13 @@ const taskSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // Optional source note link
+    linkedNoteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Note',
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -269,13 +294,47 @@ taskSchema.set('toJSON', { virtuals: true });
 
 // Pre-validate hook to normalize fields
 taskSchema.pre('validate', function(next) {
+  // Normalize assignees and sync with legacy assignedTo
+  if (Array.isArray(this.assignees)) {
+    const seen = new Set();
+    const cleanAssignees = [];
+    for (const a of this.assignees) {
+      if (a && a !== 'personal') {
+        const str = a._id ? a._id.toString() : a.toString();
+        if (!seen.has(str)) {
+          seen.add(str);
+          cleanAssignees.push(a);
+        }
+      }
+    }
+    this.assignees = cleanAssignees;
+    if (this.assignees.length > 0) {
+      this.assignedTo = this.assignees[0];
+    } else if (this.assignedTo) {
+      this.assignees = [this.assignedTo];
+    } else {
+      this.assignedTo = null;
+    }
+  } else if (this.assignedTo) {
+    this.assignees = [this.assignedTo];
+  } else {
+    this.assignees = [];
+    this.assignedTo = null;
+  }
+
   // Normalize subtasks if array of strings or invalid objects
   if (Array.isArray(this.subtasks)) {
     this.subtasks = this.subtasks
       .map((st) => {
-        if (typeof st === 'string') return { title: st, completed: false };
-        if (st && typeof st === 'object') return { title: st.title || '', completed: !!st.completed };
-        return { title: '', completed: false };
+        if (typeof st === 'string') return { title: st, completed: false, assignee: null };
+        if (st && typeof st === 'object') {
+          return {
+            title: st.title || '',
+            completed: !!st.completed,
+            assignee: st.assignee && st.assignee !== 'personal' ? st.assignee : null,
+          };
+        }
+        return { title: '', completed: false, assignee: null };
       })
       .filter((st) => st.title);
   }
@@ -342,6 +401,8 @@ taskSchema.pre('validate', function(next) {
 
 taskSchema.index({ userId: 1, startDate: 1, status: 1 });
 taskSchema.index({ workspaceId: 1, startDate: 1 });
+taskSchema.index({ assignees: 1 });
+taskSchema.index({ assignedTo: 1 });
 taskSchema.index({ userId: 1, 'recurrence.frequency': 1, startDate: 1 });
 taskSchema.index({ 'recurrenceExceptions.rescheduledDate': 1 });
 

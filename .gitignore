@@ -67,6 +67,9 @@ dist/
 build/
 out/
 
+# Local scratch and test artifacts
+scratch/
+
 # Editor & OS files
 .DS_Store
 Thumbs.db

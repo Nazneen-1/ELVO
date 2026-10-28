@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { clsx } from 'clsx';
-import { Plus } from 'lucide-react';
+import { Plus, ChevronUp } from 'lucide-react';
 import { TaskBadge } from './TaskBadge.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
 import { toISODate, calculateDateUpdates } from '../../utils/dateUtils.js';
@@ -16,10 +16,13 @@ export const DayCell = ({
   const { isCurrentMonth, isToday, dayNumber } = day;
   const { patchTask, rescheduleOccurrence, setCalendarError } = useTasks();
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const dragCounter = useRef(0);
 
-  const visibleTasks = tasks.slice(0, 3);
-  const overflowCount = tasks.length - 3;
+  const overflowThreshold = 3;
+  const hasOverflow = tasks.length > overflowThreshold;
+  const visibleTasks = isExpanded ? tasks : tasks.slice(0, overflowThreshold);
+  const overflowCount = tasks.length - overflowThreshold;
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -109,21 +112,21 @@ export const DayCell = ({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={clsx(
-        'group relative min-h-[90px] sm:min-h-[110px] lg:min-h-[130px] p-2 border-b border-r border-slate-200/70 dark:border-zinc-800/70 transition-colors flex flex-col',
-        !isCurrentMonth && 'bg-slate-50/50 dark:bg-zinc-950/40 text-slate-400 dark:text-zinc-600',
-        isCurrentMonth && 'bg-white dark:bg-zinc-900/90 text-slate-800 dark:text-zinc-200 hover:bg-slate-50/80 dark:hover:bg-zinc-800/50',
-        isSelected && 'ring-2 ring-indigo-500 ring-inset bg-indigo-50/30 dark:bg-indigo-950/20',
-        isDragOver && 'ring-2 ring-indigo-500 ring-inset bg-indigo-50/70 dark:bg-indigo-950/60'
+        'group relative min-h-[96px] sm:min-h-[115px] lg:min-h-[135px] max-h-[220px] p-2 border-b border-r border-[#E0E0E0] dark:border-[#3A3A3A] transition-colors flex flex-col',
+        !isCurrentMonth && 'bg-[#F5F5F5]/60 dark:bg-[#1A1A1A]/40 text-[#848484] dark:text-[#565656]',
+        isCurrentMonth && 'bg-white dark:bg-[#2B2B2B] text-[#2B2B2B] dark:text-[#E0E0E0] hover:bg-[#F5F5F5]/80 dark:hover:bg-[#1A1A1A]/50',
+        isSelected && 'ring-2 ring-[#565656] dark:ring-[#B3B3B3] ring-inset bg-black/[0.02] dark:bg-white/[0.02]',
+        isDragOver && 'ring-2 ring-[#2B2B2B] dark:ring-white ring-inset bg-black/[0.05] dark:bg-white/[0.05]'
       )}
     >
       {/* Date Header inside Cell */}
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="flex items-center justify-between mb-1.5 shrink-0">
         <span
           className={clsx(
             'inline-flex items-center justify-center text-xs font-semibold rounded-full transition-colors',
             isToday
-              ? 'w-6 h-6 bg-indigo-600 text-white shadow-sm shadow-indigo-500/30'
-              : 'w-6 h-6 text-slate-700 dark:text-zinc-300'
+              ? 'w-6 h-6 bg-[#2B2B2B] text-white dark:bg-[#E0E0E0] dark:text-[#2B2B2B] shadow-sm font-bold'
+              : 'w-6 h-6 text-[#565656] dark:text-[#B3B3B3]'
           )}
         >
           {dayNumber}
@@ -138,7 +141,7 @@ export const DayCell = ({
               onSelectDate(day.date);
               onOpenCreateModal(day.date);
             }}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-all"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-[#848484] hover:text-[#2B2B2B] dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-all"
             title="Add task on this day"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -146,15 +149,58 @@ export const DayCell = ({
         )}
       </div>
 
-      {/* Task List */}
-      <div className="flex-1 overflow-y-auto space-y-1">
+      {/* Task List (Scrollable when expanded or many tasks) */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={clsx(
+          'flex-1 space-y-1 pr-0.5',
+          isExpanded ? 'overflow-y-auto max-h-[140px]' : 'overflow-hidden'
+        )}
+      >
         {visibleTasks.map((task) => (
-          <TaskBadge key={task.occurrenceId || task._id} task={task} onClick={onSelectTask} />
+          <TaskBadge
+            key={task.occurrenceId || task._id}
+            task={task}
+            onClick={onSelectTask}
+          />
         ))}
 
-        {overflowCount > 0 && (
-          <div className="text-[10px] font-semibold text-slate-500 dark:text-zinc-400 px-1 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
+        {hasOverflow && !isExpanded && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsExpanded(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsExpanded(true);
+              }
+            }}
+            className="w-full text-left text-[10px] font-bold text-[#565656] dark:text-[#B3B3B3] hover:text-[#2B2B2B] dark:hover:text-white px-1 py-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+          >
             +{overflowCount} more
+          </button>
+        )}
+
+        {isExpanded && hasOverflow && (
+          <div className="pt-1 flex items-center justify-between border-t border-[#E0E0E0] dark:border-[#3A3A3A] mt-1">
+            <span className="text-[9px] text-[#848484]">
+              {tasks.length} tasks
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(false);
+              }}
+              className="text-[9px] font-bold text-[#565656] dark:text-[#B3B3B3] hover:text-[#2B2B2B] dark:hover:text-white flex items-center gap-0.5 px-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+            >
+              <span>Less</span>
+              <ChevronUp className="w-2.5 h-2.5" />
+            </button>
           </div>
         )}
       </div>

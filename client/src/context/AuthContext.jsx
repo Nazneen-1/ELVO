@@ -1,33 +1,77 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { authService } from '../services/authService.js';
+import {
+  getStoredToken,
+  setStoredToken,
+  clearStoredToken,
+  broadcastAuthEvent,
+  subscribeAuthEvents,
+} from '../utils/tokenStorage.js';
+
+// Clear user-specific selections & workspace filters so they do not leak across accounts
+const clearUserSessionPreferences = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      const keysToClear = [
+        'calflow_active_workspace',
+        'elvo_notes_scope',
+        'elvo_notes_workspace_id',
+        'elvo_notes_collection',
+        'elvo_tasks_assigned_filter',
+        'elvo_calendar_assigned_filter',
+        'elvo_tasks_filter_source_ws',
+        'elvo_tasks_filter_tag',
+      ];
+      keysToClear.forEach((k) => {
+        if (window.localStorage) localStorage.removeItem(k);
+        if (window.sessionStorage) window.sessionStorage.removeItem(k);
+      });
+    }
+  } catch (err) {
+    console.error('Failed to clear user session preferences:', err);
+  }
+};
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('elvo_token'));
-  const [isLoading, setIsLoading] = useState(true);
+  const [token, setToken] = useState(() => getStoredToken());
+  // Only start in loading state if there is actually a token that requires hydration
+  const [isLoading, setIsLoading] = useState(() => !!getStoredToken());
   const [error, setError] = useState(null);
 
-  // Hydrate user profile if token exists on mount
-  const loadUser = useCallback(async () => {
-    const savedToken = localStorage.getItem('elvo_token');
-    if (!savedToken) {
+  // Request sequence ref to prevent out-of-order race conditions
+  const loadUserSeqRef = useRef(0);
+
+  // Hydrate user profile if token exists
+  const loadUser = useCallback(async (overrideToken) => {
+    const currentSeq = ++loadUserSeqRef.current;
+    const tokenToUse = overrideToken !== undefined ? overrideToken : getStoredToken();
+
+    if (!tokenToUse) {
+      setUser(null);
+      setToken(null);
       setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
     try {
       const response = await authService.getMe();
-      if (response.success) {
+      if (currentSeq !== loadUserSeqRef.current) return;
+
+      if (response.success && response.data?.user) {
         const currentUser = response.data.user;
         setUser(currentUser);
+        setToken(tokenToUse);
+
         if (currentUser && !currentUser.preferences?.timezone) {
           try {
             const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
             if (detectedTz) {
               authService.updatePreferences({ timezone: detectedTz }).then((res) => {
-                if (res.success && res.data?.preferences) {
+                if (res.success && res.data?.preferences && currentSeq === loadUserSeqRef.current) {
                   setUser((prev) => (prev ? {
                     ...prev,
                     preferences: {
@@ -40,19 +84,63 @@ export const AuthProvider = ({ children }) => {
             }
           } catch {}
         }
+      } else {
+        if (getStoredToken() === tokenToUse && currentSeq === loadUserSeqRef.current) {
+          clearStoredToken();
+          setToken(null);
+          setUser(null);
+        }
       }
     } catch (err) {
       console.error('Failed to load user:', err);
-      localStorage.removeItem('elvo_token');
-      setToken(null);
-      setUser(null);
+      // Only clear if the failing token is still the active token in storage
+      if (getStoredToken() === tokenToUse && currentSeq === loadUserSeqRef.current) {
+        clearStoredToken();
+        setToken(null);
+        setUser(null);
+      }
     } finally {
-      setIsLoading(false);
+      if (currentSeq === loadUserSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
+  // Initial load on mount
   useEffect(() => {
     loadUser();
+  }, [loadUser]);
+
+  // Listen for cross-tab session changes (BroadcastChannel & storage events)
+  useEffect(() => {
+    const unsubscribe = subscribeAuthEvents((eventType) => {
+      if (eventType === 'LOGIN') {
+        const latestToken = getStoredToken();
+        if (latestToken) {
+          setToken(latestToken);
+          loadUser(latestToken);
+        }
+      } else if (eventType === 'LOGOUT' || eventType === 'EXPIRED') {
+        clearUserSessionPreferences();
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          try {
+            window.sessionStorage.removeItem('elvo_token');
+          } catch {}
+        }
+        setToken(null);
+        setUser(null);
+        setIsLoading(false);
+      } else if (eventType === 'USER_UPDATED') {
+        const latestToken = getStoredToken();
+        if (latestToken) {
+          loadUser(latestToken);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadUser]);
 
   // Register
@@ -63,9 +151,10 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.register({ name, email, password });
       if (response.success) {
         const { user: newUser, token: newToken } = response.data;
-        localStorage.setItem('elvo_token', newToken);
+        setStoredToken(newToken);
         setToken(newToken);
         setUser(newUser);
+        broadcastAuthEvent('LOGIN');
         return { success: true };
       }
     } catch (err) {
@@ -79,15 +168,15 @@ export const AuthProvider = ({ children }) => {
 
   // Login
   const login = async (email, password) => {
-    setIsLoading(true);
     setError(null);
     try {
       const response = await authService.login({ email, password });
       if (response.success) {
         const { user: loggedInUser, token: newToken } = response.data;
-        localStorage.setItem('elvo_token', newToken);
+        setStoredToken(newToken);
         setToken(newToken);
         setUser(loggedInUser);
+        broadcastAuthEvent('LOGIN');
         if (loggedInUser && !loggedInUser.preferences?.timezone) {
           try {
             const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -119,7 +208,9 @@ export const AuthProvider = ({ children }) => {
 
   // Logout
   const logout = () => {
-    localStorage.removeItem('elvo_token');
+    clearUserSessionPreferences();
+    clearStoredToken();
+    broadcastAuthEvent('LOGOUT');
     setToken(null);
     setUser(null);
   };
@@ -137,6 +228,7 @@ export const AuthProvider = ({ children }) => {
             ...updatedPrefs,
           },
         } : prev));
+        broadcastAuthEvent('USER_UPDATED');
         return { success: true, data: updatedPrefs };
       }
       return { success: false, error: response.message || 'Failed to update preferences' };

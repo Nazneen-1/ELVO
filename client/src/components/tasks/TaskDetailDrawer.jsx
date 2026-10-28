@@ -4,6 +4,7 @@ import { Button } from '../common/Button.jsx';
 import { Badge } from '../common/Badge.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useWorkspace } from '../../context/WorkspaceContext.jsx';
 import { format, parseISO, isPast } from 'date-fns';
 import { formatDisplayTime } from '../../utils/dateUtils.js';
 import {
@@ -25,6 +26,11 @@ import {
   Users,
   CalendarX,
   CalendarClock,
+  Briefcase,
+  Sparkles,
+  Check,
+  X,
+  Plus,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -48,17 +54,22 @@ export const TaskDetailDrawer = ({
 }) => {
   const {
     updateTask,
+    patchTask,
     deleteTask,
     updateOccurrence,
     skipOccurrence,
     rescheduleOccurrence,
     toggleSubtask,
     addComment,
+    updateComment,
+    deleteComment,
   } = useTasks();
   const { user } = useAuth();
+  const { workspaces } = useWorkspace();
   const [isDeleting, setIsDeleting] = useState(false);
   const [isStatusUpdating, setIsStatusUpdating] = useState(false);
   const [isOccurrenceUpdating, setIsOccurrenceUpdating] = useState(false);
+  const [isPriorityUpdating, setIsPriorityUpdating] = useState(false);
   const [isSkipping, setIsSkipping] = useState(false);
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [showRescheduleForm, setShowRescheduleForm] = useState(false);
@@ -68,6 +79,11 @@ export const TaskDetailDrawer = ({
   const [rescheduleError, setRescheduleError] = useState(null);
   const [commentText, setCommentText] = useState('');
   const [isPostingComment, setIsPostingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [isUpdatingComment, setIsUpdatingComment] = useState(false);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+  const [isSubtaskSubmitting, setIsSubtaskSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('details'); // 'details' | 'comments' | 'activity'
 
   if (!task) return null;
@@ -93,8 +109,47 @@ export const TaskDetailDrawer = ({
     if (!isOccurrence || !seriesOccurrenceDate) return;
     setIsOccurrenceUpdating(true);
     const targetAction = task.status === 'Done' ? 'reopen' : 'complete';
-    await updateOccurrence(masterTaskId, seriesOccurrenceDate, { action: targetAction });
+    const targetStatus = task.status === 'Done' ? 'To Do' : 'Done';
+    await updateOccurrence(masterTaskId, seriesOccurrenceDate, { action: targetAction, status: targetStatus });
     setIsOccurrenceUpdating(false);
+  };
+
+  const handleSetOccurrenceStatus = async (targetStatus) => {
+    if (!isOccurrence || !seriesOccurrenceDate) return;
+    setIsOccurrenceUpdating(true);
+    const targetAction = targetStatus === 'Done' ? 'complete' : 'reopen';
+    await updateOccurrence(masterTaskId, seriesOccurrenceDate, {
+      action: targetAction,
+      status: targetStatus,
+    });
+    setIsOccurrenceUpdating(false);
+  };
+
+  const handleUpdatePriority = async (newPriority) => {
+    if (!newPriority || task.priority === newPriority) return;
+    setIsPriorityUpdating(true);
+    await patchTask(masterTaskId, { priority: newPriority });
+    setIsPriorityUpdating(false);
+  };
+
+  const handleInlineAddSubtask = async (e) => {
+    e.preventDefault();
+    if (!newSubtaskTitle.trim()) return;
+    setIsSubtaskSubmitting(true);
+    const currentSubtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    const updated = [...currentSubtasks, { title: newSubtaskTitle.trim(), completed: false }];
+    const res = await patchTask(masterTaskId, { subtasks: updated });
+    setIsSubtaskSubmitting(false);
+    if (res?.success) {
+      setNewSubtaskTitle('');
+    }
+  };
+
+  const handleDeleteSubtask = async (e, subtaskId) => {
+    e.stopPropagation();
+    const currentSubtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    const updated = currentSubtasks.filter((s) => s._id !== subtaskId);
+    await patchTask(masterTaskId, { subtasks: updated });
   };
 
   const handleSkipOccurrence = async () => {
@@ -182,6 +237,69 @@ export const TaskDetailDrawer = ({
     setIsPostingComment(false);
   };
 
+  const handleEditComment = (comment) => {
+    setEditingCommentId(comment._id);
+    setEditingCommentText(comment.text);
+  };
+
+  const handleSaveCommentEdit = async (commentId) => {
+    if (!editingCommentText.trim()) return;
+    setIsUpdatingComment(true);
+    await updateComment(task._id, commentId, editingCommentText.trim());
+    setIsUpdatingComment(false);
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const handleDeleteComment = async (commentId) => {
+    if (!window.confirm('Delete this comment?')) return;
+    await deleteComment(task._id, commentId);
+  };
+
+  const taskWsId =
+    typeof task.workspaceId === 'object' && task.workspaceId?._id
+      ? task.workspaceId._id.toString()
+      : task.workspaceId?.toString() || null;
+  const currentWs = taskWsId ? workspaces.find((w) => w._id.toString() === taskWsId) : null;
+  let userRole = null;
+  if (currentWs && user?._id) {
+    const currentUserIdStr = user._id.toString();
+    const ownerIdStr =
+      typeof currentWs.owner === 'object' && currentWs.owner?._id
+        ? currentWs.owner._id.toString()
+        : currentWs.owner?.toString();
+    if (ownerIdStr === currentUserIdStr) {
+      userRole = 'owner';
+    } else {
+      const mem = (currentWs.members || []).find((m) => {
+        const mUserId =
+          typeof m.user === 'object' && m.user?._id ? m.user._id.toString() : m.user?.toString();
+        return mUserId === currentUserIdStr;
+      });
+      if (mem) userRole = mem.role;
+    }
+  }
+
+  const currentUserIdStr = user?._id?.toString();
+  const taskCreatorIdStr =
+    typeof task.userId === 'object' && task.userId?._id
+      ? task.userId._id.toString()
+      : task.userId?.toString();
+  const isCreator = Boolean(currentUserIdStr && taskCreatorIdStr === currentUserIdStr);
+
+  const isAssigned =
+    (task.assignees || []).some((a) => {
+      const aId = typeof a === 'object' && a?._id ? a._id.toString() : a?.toString();
+      return aId === currentUserIdStr;
+    }) ||
+    (typeof task.assignedTo === 'object' && task.assignedTo?._id
+      ? task.assignedTo._id.toString() === currentUserIdStr
+      : task.assignedTo?.toString() === currentUserIdStr);
+
+  const isOwnerOrAdmin = userRole === 'owner' || userRole === 'admin';
+  const canEdit = !taskWsId ? true : isOwnerOrAdmin || isCreator || isAssigned;
+  const canDelete = !taskWsId ? true : isOwnerOrAdmin || isCreator;
+
   const formattedDate = task.startDate
     ? format(
         typeof task.startDate === 'string'
@@ -238,6 +356,27 @@ export const TaskDetailDrawer = ({
                 <Bell className="w-3 h-3" /> {formatReminderLeadTime(task.reminder?.minutesBefore)}
               </span>
             )}
+
+            {/* Quick Priority Switcher */}
+            <div className="inline-flex items-center gap-1 sm:ml-auto p-0.5 rounded-lg bg-slate-100 dark:bg-zinc-800/80 text-[10px]">
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-zinc-400 px-1">Set:</span>
+              {['Low', 'Medium', 'High'].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => handleUpdatePriority(p)}
+                  disabled={isPriorityUpdating || task.priority === p}
+                  className={clsx(
+                    'px-2 py-0.5 rounded font-bold transition-all',
+                    task.priority === p
+                      ? 'bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-100 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
           </div>
           <h2 className="text-xl font-bold text-slate-900 dark:text-zinc-100 leading-tight">
             {task.title}
@@ -313,12 +452,56 @@ export const TaskDetailDrawer = ({
                 </div>
               )}
 
-              {task.workspaceId && (
+              {task.workspaceId ? (
                 <div className="flex items-center gap-2 text-slate-700 dark:text-zinc-300">
-                  <Users className="w-4 h-4 text-indigo-600 shrink-0" />
-                  <span>Workspace Task</span>
+                  <Briefcase className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span>
+                    Workspace: {typeof task.workspaceId === 'object' && task.workspaceId?.name ? task.workspaceId.name : 'Team Workspace'}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-slate-500 dark:text-zinc-400">
+                  <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span>Personal Task</span>
                 </div>
               )}
+
+              {task.assignees && task.assignees.length > 0 ? (
+                <div className="flex items-start gap-2 text-slate-700 dark:text-zinc-300">
+                  <Users className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-xs">Assignees:</span>
+                    {task.assignees.map((a, idx) => {
+                      const name =
+                        typeof a === 'object' && a?.name
+                          ? a.name
+                          : typeof a === 'object' && a?.email
+                          ? a.email
+                          : 'Member';
+                      return (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                        >
+                          {name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : task.assignedTo ? (
+                <div className="flex items-center gap-2 text-slate-700 dark:text-zinc-300">
+                  <Users className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Assigned: {typeof task.assignedTo === 'object' && task.assignedTo?.name ? task.assignedTo.name : 'Assigned Member'}
+                  </span>
+                </div>
+              ) : taskWsId ? (
+                <div className="flex items-center gap-2 text-slate-400 dark:text-zinc-500">
+                  <Users className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>Unassigned</span>
+                </div>
+              ) : null}
             </div>
 
             {/* Tags */}
@@ -347,53 +530,88 @@ export const TaskDetailDrawer = ({
               </div>
             )}
 
-            {/* Interactive Subtasks Checklist */}
-            {totalSubtasksCount > 0 && (
-              <div className="space-y-2 p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-950/60 border border-slate-200/60 dark:border-zinc-800/60">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-zinc-300">
-                  <span>Subtasks / Checklist</span>
+            {/* Interactive Subtasks Checklist & Add Subtask */}
+            <div className="space-y-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-950/60 border border-slate-200/60 dark:border-zinc-800/60">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                <span>Subtasks / Checklist</span>
+                {totalSubtasksCount > 0 && (
                   <span className="text-slate-500 font-normal">
                     {completedSubtasksCount} of {totalSubtasksCount} completed (
                     {Math.round((completedSubtasksCount / totalSubtasksCount) * 100)}%)
                   </span>
-                </div>
-                {/* Progress bar */}
-                <div className="w-full h-1.5 bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-600 rounded-full transition-all duration-300"
-                    style={{
-                      width: `${(completedSubtasksCount / totalSubtasksCount) * 100}%`,
-                    }}
-                  />
-                </div>
-                <div className="space-y-1.5 pt-1">
-                  {task.subtasks.map((st) => (
-                    <button
-                      key={st._id}
-                      type="button"
-                      onClick={() => toggleSubtask(task._id, st._id)}
-                      className="flex items-center gap-2.5 w-full text-left p-1.5 rounded-lg hover:bg-white dark:hover:bg-zinc-800 transition-colors group"
-                    >
-                      {st.completed ? (
-                        <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-400 group-hover:text-slate-600 shrink-0" />
-                      )}
-                      <span
-                        className={clsx(
-                          'text-xs transition-colors',
-                          st.completed
-                            ? 'line-through text-slate-400 dark:text-zinc-500'
-                            : 'text-slate-700 dark:text-zinc-200'
-                        )}
-                      >
-                        {st.title}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                )}
               </div>
-            )}
+
+              {totalSubtasksCount > 0 && (
+                <>
+                  <div className="w-full h-1.5 bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${(completedSubtasksCount / totalSubtasksCount) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-1 pt-1 max-h-48 overflow-y-auto pr-1">
+                    {task.subtasks.map((st) => (
+                      <div
+                        key={st._id}
+                        className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-white dark:hover:bg-zinc-800 transition-colors group"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSubtask(task._id, st._id)}
+                          className="flex items-center gap-2.5 flex-1 text-left min-w-0"
+                        >
+                          {st.completed ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-400 group-hover:text-slate-600 shrink-0" />
+                          )}
+                          <span
+                            className={clsx(
+                              'text-xs transition-colors truncate',
+                              st.completed
+                                ? 'line-through text-slate-400 dark:text-zinc-500'
+                                : 'text-slate-700 dark:text-zinc-200'
+                            )}
+                          >
+                            {st.title}
+                          </span>
+                          {st.assignee && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/50 shrink-0">
+                              @{typeof st.assignee === 'object' && st.assignee?.name ? st.assignee.name : 'Assigned'}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteSubtask(e, st._id)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 transition-opacity"
+                          title="Delete subtask"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Inline Add Subtask */}
+              <form onSubmit={handleInlineAddSubtask} className="flex gap-2 pt-2 border-t border-slate-200/50 dark:border-zinc-800/50">
+                <input
+                  type="text"
+                  placeholder="Add a new checklist item..."
+                  value={newSubtaskTitle}
+                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                  className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <Button type="submit" size="xs" variant="secondary" isLoading={isSubtaskSubmitting}>
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </form>
+            </div>
 
             {/* Status Section */}
             {isOccurrence ? (
@@ -416,16 +634,39 @@ export const TaskDetailDrawer = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Button
-                    variant={task.status === 'Done' ? 'secondary' : 'primary'}
-                    className="w-full justify-center"
-                    onClick={handleToggleOccurrenceStatus}
-                    isLoading={isOccurrenceUpdating}
-                  >
-                    <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                    {task.status === 'Done' ? 'Mark as To Do' : 'Mark as Done'}
-                  </Button>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      variant={task.status === 'To Do' ? 'secondary' : 'outline'}
+                      size="sm"
+                      disabled={task.status === 'To Do'}
+                      className="justify-center text-xs"
+                      onClick={() => handleSetOccurrenceStatus('To Do')}
+                      isLoading={isOccurrenceUpdating && task.status !== 'To Do'}
+                    >
+                      To Do
+                    </Button>
+                    <Button
+                      variant={task.status === 'In Progress' ? 'secondary' : 'outline'}
+                      size="sm"
+                      disabled={task.status === 'In Progress'}
+                      className="justify-center text-xs"
+                      onClick={() => handleSetOccurrenceStatus('In Progress')}
+                      isLoading={isOccurrenceUpdating && task.status !== 'In Progress'}
+                    >
+                      In Progress
+                    </Button>
+                    <Button
+                      variant={task.status === 'Done' ? 'secondary' : 'primary'}
+                      size="sm"
+                      className="justify-center text-xs"
+                      onClick={() => handleSetOccurrenceStatus(task.status === 'Done' ? 'To Do' : 'Done')}
+                      isLoading={isOccurrenceUpdating && (task.status === 'Done' || task.status === 'To Do')}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                      {task.status === 'Done' ? 'Reopen' : 'Done'}
+                    </Button>
+                  </div>
 
                   <Button
                     variant="outline"
@@ -564,25 +805,90 @@ export const TaskDetailDrawer = ({
         {activeTab === 'comments' && (
           <div className="space-y-3">
             <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-              {(!task.comments || task.comments.length === 0) ? (
+              {!task.comments || task.comments.length === 0 ? (
                 <div className="py-6 text-center text-xs text-slate-400 dark:text-zinc-500">
                   No comments yet. Start the conversation below.
                 </div>
               ) : (
-                task.comments.map((c, i) => (
-                  <div
-                    key={c._id || i}
-                    className="p-3 rounded-xl bg-slate-50 dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 text-xs space-y-1"
-                  >
-                    <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-zinc-300">
-                      <span>{c.userName || 'User'}</span>
-                      <span className="text-[10px] text-slate-400 font-normal">
-                        {c.createdAt ? format(parseISO(c.createdAt), 'MMM d, h:mm a') : 'Just now'}
-                      </span>
+                task.comments.map((c, i) => {
+                  const commentAuthorId =
+                    typeof c.userId === 'object' && c.userId?._id
+                      ? c.userId._id.toString()
+                      : c.userId?.toString();
+                  const isAuthor = currentUserIdStr && commentAuthorId === currentUserIdStr;
+                  const canDeleteComm = isAuthor || isOwnerOrAdmin;
+
+                  return (
+                    <div
+                      key={c._id || i}
+                      className="p-3 rounded-xl bg-slate-50 dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800 text-xs space-y-1.5 group"
+                    >
+                      <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-zinc-300">
+                        <span>{c.userName || 'User'}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            {c.createdAt ? format(parseISO(c.createdAt), 'MMM d, h:mm a') : 'Just now'}
+                            {c.updatedAt && c.updatedAt !== c.createdAt && ' (edited)'}
+                          </span>
+                          {editingCommentId !== c._id && (
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {isAuthor && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditComment(c)}
+                                  className="text-slate-400 hover:text-indigo-600 transition-colors"
+                                  title="Edit comment"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {canDeleteComm && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteComment(c._id)}
+                                  className="text-slate-400 hover:text-rose-500 transition-colors"
+                                  title="Delete comment"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingCommentId === c._id ? (
+                        <div className="space-y-1.5 pt-1">
+                          <input
+                            type="text"
+                            value={editingCommentText}
+                            onChange={(e) => setEditingCommentText(e.target.value)}
+                            className="w-full px-2.5 py-1 text-xs rounded-lg bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingCommentId(null)}
+                              className="px-2 py-0.5 rounded text-[11px] text-slate-500 hover:bg-slate-200 dark:hover:bg-zinc-800"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveCommentEdit(c._id)}
+                              disabled={isUpdatingComment}
+                              className="px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-600 text-white hover:bg-indigo-700"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-600 dark:text-zinc-300 whitespace-pre-wrap">{c.text}</p>
+                      )}
                     </div>
-                    <p className="text-slate-600 dark:text-zinc-300 whitespace-pre-wrap">{c.text}</p>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -604,13 +910,16 @@ export const TaskDetailDrawer = ({
         {/* Tab 3: Activity Logs */}
         {activeTab === 'activity' && (
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-            {(!task.activity || task.activity.length === 0) ? (
+            {!task.activity || task.activity.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400 dark:text-zinc-500">
                 No activity recorded yet.
               </div>
             ) : (
               task.activity.map((act, i) => (
-                <div key={act._id || i} className="flex items-start gap-2 text-xs py-1.5 border-b border-slate-100 dark:border-zinc-800/60 last:border-0">
+                <div
+                  key={act._id || i}
+                  className="flex items-start gap-2 text-xs py-1.5 border-b border-slate-100 dark:border-zinc-800/60 last:border-0"
+                >
                   <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
                   <div className="flex-1">
                     <p className="font-medium text-slate-800 dark:text-zinc-200">{act.action}</p>
@@ -627,29 +936,35 @@ export const TaskDetailDrawer = ({
 
         {/* Bottom Actions (Edit / Delete) */}
         <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-zinc-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleDelete}
-            isLoading={isDeleting}
-            className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-          >
-            <Trash2 className="w-4 h-4 mr-1.5" />
-            Delete
-          </Button>
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDelete}
+              isLoading={isDeleting}
+              className="text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" />
+              Delete
+            </Button>
+          ) : (
+            <div />
+          )}
 
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                onClose();
-                onEdit(task);
-              }}
-            >
-              <Edit3 className="w-4 h-4 mr-1.5" />
-              Edit
-            </Button>
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onEdit(task);
+                }}
+              >
+                <Edit3 className="w-4 h-4 mr-1.5" />
+                Edit
+              </Button>
+            )}
             <Button variant="primary" size="sm" onClick={onClose}>
               Done
             </Button>

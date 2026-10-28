@@ -55,9 +55,10 @@ export const MobileAgendaView = ({
         ) : (
           tasks.map((task) => {
             const isCompleted = task.status === 'Done';
+            const wsName = typeof task.workspaceId === 'object' && task.workspaceId?.name ? task.workspaceId.name : null;
             return (
               <div
-                key={task._id}
+                key={task.occurrenceId || task._id}
                 onClick={() => onSelectTask(task)}
                 className={clsx(
                   'p-3 rounded-xl border border-slate-200/70 dark:border-zinc-800/70 bg-slate-50/50 dark:bg-zinc-950/40 flex items-center justify-between gap-3 active:scale-[0.99] transition-all',
@@ -76,14 +77,21 @@ export const MobileAgendaView = ({
                     )}
                   />
                   <div className="min-w-0">
-                    <p
-                      className={clsx(
-                        'text-sm font-semibold text-slate-900 dark:text-zinc-100 truncate',
-                        isCompleted && 'line-through text-slate-500 dark:text-zinc-500'
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p
+                        className={clsx(
+                          'text-sm font-semibold text-slate-900 dark:text-zinc-100 truncate',
+                          isCompleted && 'line-through text-slate-500 dark:text-zinc-500'
+                        )}
+                      >
+                        {task.title}
+                      </p>
+                      {wsName && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold border border-purple-200/60 dark:border-purple-800/50">
+                          {wsName}
+                        </span>
                       )}
-                    >
-                      {task.title}
-                    </p>
+                    </div>
                     {task.startTime && (
                       <p className="text-xs text-slate-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5">
                         <Clock className="w-3 h-3" />

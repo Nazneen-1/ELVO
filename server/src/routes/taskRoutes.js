@@ -9,6 +9,8 @@ import {
   patchTask,
   deleteTask,
   addComment,
+  updateComment,
+  deleteComment,
   updateTaskOccurrence,
   rescheduleTaskOccurrence,
   checkTaskConflicts,
@@ -29,7 +31,10 @@ router.route('/')
   .get(getTasks)
   .post(createTask);
 
+// Task comments
 router.post('/:id/comments', addComment);
+router.put('/:id/comments/:commentId', updateComment);
+router.delete('/:id/comments/:commentId', deleteComment);
 
 // Reschedule occurrence routes (specific routes before generic occurrence param routes)
 router.post('/:id/occurrences/:date/reschedule', rescheduleTaskOccurrence);

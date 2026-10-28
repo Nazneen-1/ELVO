@@ -9,6 +9,9 @@ import workspaceRoutes from './routes/workspaceRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import reminderRoutes from './routes/reminderRoutes.js';
+import noteRoutes from './routes/noteRoutes.js';
+import noteCollectionRoutes from './routes/noteCollectionRoutes.js';
+import habitRoutes from './routes/habitRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
 const app = express();
@@ -95,6 +98,9 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reminders', reminderRoutes);
+app.use('/api/notes', noteRoutes);
+app.use('/api/note-collections', noteCollectionRoutes);
+app.use('/api/habits', habitRoutes);
 
 // 404 and Global Error Handling
 app.use(notFound);

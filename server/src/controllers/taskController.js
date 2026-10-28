@@ -9,6 +9,19 @@ import {
 import { detectTaskConflicts } from '../utils/conflictDetector.js';
 import { syncTaskReminders, cleanupTaskReminders } from '../utils/reminderScheduler.js';
 import { notifyTaskAssignment, notifyTaskComment } from '../utils/collaborativeNotifications.js';
+import {
+  getUserRole,
+  isWorkspaceMember,
+  canManageWorkspace,
+  canCreateTask,
+  canEditTask,
+  canDeleteTask,
+  canCompleteTask,
+  canAssignTask,
+  canCommentOnTask,
+  canEditComment,
+  canDeleteComment,
+} from '../utils/workspaceAuth.js';
 
 const SUPPORTED_REMINDER_MINUTES = [5, 10, 15, 30, 60, 120, 1440];
 
@@ -112,23 +125,69 @@ export const validateDateTimes = ({ startDate, endDate, dueDate, startTime, endT
 // @access  Private
 export const getTasks = async (req, res, next) => {
   try {
-    const { start, end, status, priority, workspaceId, tag, q, sort } = req.query;
+    const { start, end, status, priority, workspaceId, sourceWorkspaceId, tag, q, sort } = req.query;
 
     const query = {};
 
-    // Workspace or personal filter
-    if (workspaceId && workspaceId !== 'personal' && workspaceId !== 'all') {
+    // Workspace or personal or my-work filter
+    if (workspaceId && workspaceId !== 'personal' && workspaceId !== 'all' && workspaceId !== 'my-work') {
       const hasAccess = await verifyWorkspaceAccess(workspaceId, req.user._id);
       if (!hasAccess) {
         return res.status(403).json({ success: false, message: 'Access denied to this workspace' });
       }
       query.workspaceId = workspaceId;
+      if (req.query.assignedToMe === 'true') {
+        query.$or = [{ assignees: req.user._id }, { assignedTo: req.user._id }];
+      }
     } else if (workspaceId === 'personal') {
       query.userId = req.user._id;
       query.workspaceId = null;
+    } else if (workspaceId === 'my-work') {
+      // Find all active workspaces where current user is owner or member
+      const userWorkspaces = await Workspace.find(
+        {
+          $or: [{ owner: req.user._id }, { 'members.user': req.user._id }],
+          isArchived: { $ne: true },
+        },
+        '_id'
+      ).lean();
+      const authorizedWorkspaceIds = userWorkspaces.map((w) => w._id);
+
+      if (sourceWorkspaceId === 'personal') {
+        query.userId = req.user._id;
+        query.workspaceId = null;
+      } else if (sourceWorkspaceId && sourceWorkspaceId !== 'all') {
+        const isAuth = authorizedWorkspaceIds.some((id) => id.toString() === sourceWorkspaceId.toString());
+        if (!isAuth) {
+          return res.status(403).json({ success: false, message: 'Access denied to this workspace' });
+        }
+        query.workspaceId = sourceWorkspaceId;
+        query.$or = [
+          { assignees: req.user._id },
+          { assignedTo: req.user._id },
+        ];
+      } else {
+        query.$or = [
+          {
+            userId: req.user._id,
+            $or: [{ workspaceId: null }, { workspaceId: { $exists: false } }],
+          },
+          {
+            workspaceId: { $in: authorizedWorkspaceIds },
+            $or: [
+              { assignees: req.user._id },
+              { assignedTo: req.user._id },
+            ],
+          },
+        ];
+      }
     } else {
       // Default: user's own tasks or tasks assigned to user
-      query.$or = [{ userId: req.user._id }, { assignedTo: req.user._id }];
+      query.$or = [
+        { userId: req.user._id },
+        { assignees: req.user._id },
+        { assignedTo: req.user._id },
+      ];
     }
 
     // Filter by date range if provided.
@@ -217,14 +276,23 @@ export const getTasks = async (req, res, next) => {
 
     // Text search query on title or description
     if (q && q.trim()) {
-      query.$and = query.$and || [];
-      query.$and.push({
+      const searchMatch = {
         $or: [
           { title: { $regex: q.trim(), $options: 'i' } },
           { description: { $regex: q.trim(), $options: 'i' } },
           { tags: { $regex: q.trim(), $options: 'i' } },
         ],
-      });
+      };
+      if (query.$or) {
+        query.$and = query.$and || [];
+        query.$and.push({ $or: query.$or });
+        delete query.$or;
+        query.$and.push(searchMatch);
+      } else if (query.$and) {
+        query.$and.push(searchMatch);
+      } else {
+        query.$and = [searchMatch];
+      }
     }
 
     // Sorting
@@ -240,6 +308,10 @@ export const getTasks = async (req, res, next) => {
     const tasks = await Task.find(query)
       .populate('userId', 'name email')
       .populate('assignedTo', 'name email')
+      .populate('assignees', 'name email')
+      .populate('subtasks.assignee', 'name email')
+      .populate('workspaceId', 'name color icon isArchived')
+      .populate('comments.userId', 'name email')
       .sort(sortOptions);
 
     let resultTasks = tasks;
@@ -419,16 +491,26 @@ export const getTaskById = async (req, res, next) => {
   try {
     let task = await Task.findOne({
       _id: req.params.id,
-      $or: [{ userId: req.user._id }, { assignedTo: req.user._id }],
+      $or: [
+        { userId: req.user._id },
+        { assignees: req.user._id },
+        { assignedTo: req.user._id },
+      ],
     })
       .populate('userId', 'name email')
       .populate('assignedTo', 'name email')
+      .populate('assignees', 'name email')
+      .populate('subtasks.assignee', 'name email')
+      .populate('workspaceId', 'name color icon isArchived')
       .populate('comments.userId', 'name email');
 
     if (!task) {
       const candidateTask = await Task.findById(req.params.id)
         .populate('userId', 'name email')
         .populate('assignedTo', 'name email')
+        .populate('assignees', 'name email')
+        .populate('subtasks.assignee', 'name email')
+        .populate('workspaceId', 'name color icon isArchived')
         .populate('comments.userId', 'name email');
       if (candidateTask && candidateTask.workspaceId) {
         const hasAccess = await verifyWorkspaceAccess(candidateTask.workspaceId, req.user._id);
@@ -532,28 +614,74 @@ export const createTask = async (req, res, next) => {
     }
 
     const candidateWorkspace = (workspaceId && workspaceId !== 'personal') ? workspaceId : null;
+    let workspaceDoc = null;
     if (candidateWorkspace) {
-      const hasAccess = await verifyWorkspaceAccess(candidateWorkspace, req.user._id);
-      if (!hasAccess) {
+      workspaceDoc = await Workspace.findById(candidateWorkspace);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
         return res.status(403).json({ success: false, message: 'Access denied to this workspace' });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+      if (!canCreateTask(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to create tasks in this workspace',
+        });
       }
     }
 
-    const candidateAssignee = (assignedTo && assignedTo !== 'personal') ? assignedTo : null;
-    if (candidateAssignee) {
+    // Resolve and validate candidate assignees
+    let candidateAssignees = [];
+    if (Array.isArray(req.body.assignees)) {
+      candidateAssignees = req.body.assignees.filter((a) => a && a !== 'personal');
+    } else if (assignedTo && assignedTo !== 'personal') {
+      candidateAssignees = [assignedTo];
+    }
+
+    if (candidateAssignees.length > 0) {
       if (candidateWorkspace) {
-        const hasAssigneeAccess = await verifyWorkspaceAccess(candidateWorkspace, candidateAssignee);
-        if (!hasAssigneeAccess) {
-          return res.status(400).json({
-            success: false,
-            message: 'Assigned user is not a member of the selected workspace',
-          });
+        for (const aId of candidateAssignees) {
+          if (!isWorkspaceMember(workspaceDoc, aId)) {
+            return res.status(400).json({
+              success: false,
+              message: 'One or more assigned users are not members of the workspace',
+            });
+          }
         }
-      } else if (candidateAssignee.toString() !== req.user._id.toString()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot assign a personal task to another user',
-        });
+      } else {
+        for (const aId of candidateAssignees) {
+          if (aId.toString() !== req.user._id.toString()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot assign a personal task to another user',
+            });
+          }
+        }
+      }
+    }
+
+    // Validate subtask assignees against workspace membership
+    if (Array.isArray(subtasks)) {
+      for (const st of subtasks) {
+        if (st && st.assignee && st.assignee !== 'personal') {
+          if (candidateWorkspace) {
+            if (!isWorkspaceMember(workspaceDoc, st.assignee)) {
+              return res.status(400).json({
+                success: false,
+                message: 'One or more subtask assignees are not members of the workspace',
+              });
+            }
+          } else if (st.assignee.toString() !== req.user._id.toString()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot assign subtasks in a personal task to another user',
+            });
+          }
+        }
       }
     }
 
@@ -582,8 +710,9 @@ export const createTask = async (req, res, next) => {
 
     const task = await Task.create({
       userId: req.user._id,
-      workspaceId: (workspaceId && workspaceId !== 'personal') ? workspaceId : null,
-      assignedTo: (assignedTo && assignedTo !== 'personal') ? assignedTo : null,
+      workspaceId: candidateWorkspace,
+      assignees: candidateAssignees,
+      assignedTo: candidateAssignees[0] || null,
       title: title.trim(),
       description: description || '',
       startDate: parsedStart,
@@ -619,6 +748,12 @@ export const createTask = async (req, res, next) => {
       });
     }
 
+    await task.populate('workspaceId', 'name color icon isArchived');
+    await task.populate('userId', 'name email');
+    await task.populate('assignedTo', 'name email avatar');
+    await task.populate('assignees', 'name email avatar');
+    await task.populate('subtasks.assignee', 'name email avatar');
+
     return res.status(201).json({
       success: true,
       data: task,
@@ -634,16 +769,49 @@ export const createTask = async (req, res, next) => {
 // @access  Private
 export const updateTask = async (req, res, next) => {
   try {
-    const task = await Task.findOne({
-      _id: req.params.id,
-      $or: [{ userId: req.user._id }, { assignedTo: req.user._id }],
-    });
+    const task = await Task.findById(req.params.id);
 
     if (!task) {
       return res.status(404).json({
         success: false,
         message: 'Task not found',
       });
+    }
+
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this workspace',
+        });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+    }
+
+    // Permission check: if only updating status, canCompleteTask is sufficient; otherwise require canEditTask
+    const updateKeys = Object.keys(req.body);
+    const isOnlyStatus = updateKeys.length > 0 && updateKeys.every((k) => k === 'status' || k === 'completed');
+    if (isOnlyStatus) {
+      if (!canCompleteTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to change task status',
+        });
+      }
+    } else {
+      if (!canEditTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to edit this task',
+        });
+      }
     }
 
     const allowedUpdates = [
@@ -664,6 +832,7 @@ export const updateTask = async (req, res, next) => {
       'reminder',
       'workspaceId',
       'assignedTo',
+      'assignees',
       'estimatedMinutes',
       'actualMinutes',
     ];
@@ -689,6 +858,70 @@ export const updateTask = async (req, res, next) => {
       }
     }
 
+    // Handle assignment changes with permission check
+    const isAssigneeChange = req.body.assignees !== undefined || req.body.assignedTo !== undefined;
+    if (isAssigneeChange) {
+      let candidateAssignees = [];
+      if (Array.isArray(req.body.assignees)) {
+        candidateAssignees = req.body.assignees.filter((a) => a && a !== 'personal');
+      } else if (req.body.assignedTo && req.body.assignedTo !== 'personal') {
+        candidateAssignees = [req.body.assignedTo];
+      }
+
+      if (!canAssignTask(task, workspaceDoc, req.user._id, candidateAssignees)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to change task assignments',
+        });
+      }
+
+      if (candidateAssignees.length > 0) {
+        if (task.workspaceId) {
+          for (const aId of candidateAssignees) {
+            if (!isWorkspaceMember(workspaceDoc, aId)) {
+              return res.status(400).json({
+                success: false,
+                message: 'One or more assigned users are not members of the workspace',
+              });
+            }
+          }
+        } else {
+          for (const aId of candidateAssignees) {
+            if (aId.toString() !== req.user._id.toString()) {
+              return res.status(400).json({
+                success: false,
+                message: 'Cannot assign a personal task to another user',
+              });
+            }
+          }
+        }
+      }
+
+      task.assignees = candidateAssignees;
+      task.assignedTo = candidateAssignees[0] || null;
+    }
+
+    // Validate subtask assignees
+    if (Array.isArray(req.body.subtasks)) {
+      for (const st of req.body.subtasks) {
+        if (st && st.assignee && st.assignee !== 'personal') {
+          if (task.workspaceId) {
+            if (!isWorkspaceMember(workspaceDoc, st.assignee)) {
+              return res.status(400).json({
+                success: false,
+                message: 'One or more subtask assignees are not members of the workspace',
+              });
+            }
+          } else if (st.assignee.toString() !== req.user._id.toString()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot assign subtasks in a personal task to another user',
+            });
+          }
+        }
+      }
+    }
+
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
         if (field === 'startDate') {
@@ -696,8 +929,10 @@ export const updateTask = async (req, res, next) => {
           if (parsed) task.startDate = parsed;
         } else if (field === 'endDate' || field === 'dueDate') {
           task[field] = parseDateOnlyUTC(req.body[field]);
-        } else if (field === 'workspaceId' || field === 'assignedTo') {
+        } else if (field === 'workspaceId') {
           task[field] = (req.body[field] && req.body[field] !== 'personal') ? req.body[field] : null;
+        } else if (field === 'assignedTo' || field === 'assignees') {
+          // Handled explicitly above
         } else if (field === 'recurrence' && req.body.recurrence) {
           const rec = req.body.recurrence;
           task.recurrence = {
@@ -762,23 +997,6 @@ export const updateTask = async (req, res, next) => {
       });
     }
 
-    if (task.assignedTo && task.assignedTo.toString() !== prevAssigneeId) {
-      if (task.workspaceId) {
-        const hasAssigneeAccess = await verifyWorkspaceAccess(task.workspaceId, task.assignedTo);
-        if (!hasAssigneeAccess) {
-          return res.status(400).json({
-            success: false,
-            message: 'Assigned user is not a member of the workspace',
-          });
-        }
-      } else if (task.assignedTo.toString() !== task.userId.toString()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot assign a personal task to another user',
-        });
-      }
-    }
-
     await task.save();
     await syncTaskReminders(task);
 
@@ -789,6 +1007,13 @@ export const updateTask = async (req, res, next) => {
         prevAssigneeId,
       });
     }
+
+    await task.populate('workspaceId', 'name color icon isArchived');
+    await task.populate('userId', 'name email');
+    await task.populate('assignedTo', 'name email avatar');
+    await task.populate('assignees', 'name email avatar');
+    await task.populate('subtasks.assignee', 'name email avatar');
+    await task.populate('comments.userId', 'name email avatar');
 
     return res.status(200).json({
       success: true,
@@ -805,16 +1030,69 @@ export const updateTask = async (req, res, next) => {
 // @access  Private
 export const patchTask = async (req, res, next) => {
   try {
-    const task = await Task.findOne({
-      _id: req.params.id,
-      $or: [{ userId: req.user._id }, { assignedTo: req.user._id }],
-    });
+    const task = await Task.findById(req.params.id);
 
     if (!task) {
       return res.status(404).json({
         success: false,
         message: 'Task not found',
       });
+    }
+
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this workspace',
+        });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+    }
+
+    const patchKeys = Object.keys(req.body);
+    const isOnlyStatus = patchKeys.length > 0 && patchKeys.every((k) => k === 'status' || k === 'completed');
+    if (isOnlyStatus) {
+      if (!canCompleteTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to change task status',
+        });
+      }
+    } else {
+      if (!canEditTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to edit this task',
+        });
+      }
+    }
+
+    // Validate subtask assignees
+    if (Array.isArray(req.body.subtasks)) {
+      for (const st of req.body.subtasks) {
+        if (st && st.assignee && st.assignee !== 'personal') {
+          if (task.workspaceId) {
+            if (!isWorkspaceMember(workspaceDoc, st.assignee)) {
+              return res.status(400).json({
+                success: false,
+                message: 'One or more subtask assignees are not members of the workspace',
+              });
+            }
+          } else if (st.assignee.toString() !== req.user._id.toString()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot assign subtasks in a personal task to another user',
+            });
+          }
+        }
+      }
     }
 
     const prevStatus = task.status;
@@ -970,6 +1248,12 @@ export const patchTask = async (req, res, next) => {
 
     await task.save();
     await syncTaskReminders(task);
+    await task.populate('workspaceId', 'name color icon isArchived');
+    await task.populate('userId', 'name email');
+    await task.populate('assignedTo', 'name email avatar');
+    await task.populate('assignees', 'name email avatar');
+    await task.populate('subtasks.assignee', 'name email avatar');
+    await task.populate('comments.userId', 'name email avatar');
 
     return res.status(200).json({
       success: true,
@@ -996,14 +1280,21 @@ export const addComment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Task not found' });
     }
 
-    let hasAccess =
-      task.userId.toString() === req.user._id.toString() ||
-      (task.assignedTo && task.assignedTo.toString() === req.user._id.toString());
-    if (!hasAccess && task.workspaceId) {
-      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({ success: false, message: 'Access denied to this workspace' });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
     }
 
-    if (!hasAccess) {
+    if (!canCommentOnTask(task, workspaceDoc, req.user._id)) {
       return res.status(403).json({ success: false, message: 'Not authorized to comment on this task' });
     }
 
@@ -1012,6 +1303,7 @@ export const addComment = async (req, res, next) => {
       userName: req.user.name || 'User',
       text: text.trim(),
       createdAt: new Date(),
+      updatedAt: null,
     };
 
     if (!task.comments) task.comments = [];
@@ -1031,8 +1323,125 @@ export const addComment = async (req, res, next) => {
       commentText: text.trim(),
     });
 
+    await task.populate('comments.userId', 'name email avatar');
+
     return res.status(201).json({
       success: true,
+      data: task,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update a comment on a task
+// @route   PUT /api/tasks/:id/comments/:commentId
+// @access  Private
+export const updateComment = async (req, res, next) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, message: 'Comment text is required' });
+    }
+
+    const task = await Task.findById(req.params.id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (workspaceDoc?.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+    }
+
+    const comment = (task.comments || []).id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: 'Comment not found' });
+    }
+
+    if (!canEditComment(comment, task, workspaceDoc, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the comment author can edit their comment',
+      });
+    }
+
+    comment.text = text.trim();
+    comment.updatedAt = new Date();
+
+    if (!task.activity) task.activity = [];
+    task.activity.push({
+      action: 'Comment edited',
+      details: `${req.user?.name || 'User'} edited a comment`,
+      timestamp: new Date(),
+    });
+
+    await task.save();
+    await task.populate('comments.userId', 'name email avatar');
+
+    return res.status(200).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete a comment from a task
+// @route   DELETE /api/tasks/:id/comments/:commentId
+// @access  Private
+export const deleteComment = async (req, res, next) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (workspaceDoc?.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+    }
+
+    const comment = (task.comments || []).id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: 'Comment not found' });
+    }
+
+    if (!canDeleteComment(comment, task, workspaceDoc, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this comment',
+      });
+    }
+
+    task.comments.pull(req.params.commentId);
+
+    if (!task.activity) task.activity = [];
+    task.activity.push({
+      action: 'Comment deleted',
+      details: `${req.user?.name || 'User'} deleted a comment`,
+      timestamp: new Date(),
+    });
+
+    await task.save();
+    await task.populate('comments.userId', 'name email avatar');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Comment deleted successfully',
       data: task,
     });
   } catch (error) {
@@ -1045,10 +1454,7 @@ export const addComment = async (req, res, next) => {
 // @access  Private
 export const deleteTask = async (req, res, next) => {
   try {
-    const task = await Task.findOneAndDelete({
-      _id: req.params.id,
-      userId: req.user._id,
-    });
+    const task = await Task.findById(req.params.id);
 
     if (!task) {
       return res.status(404).json({
@@ -1057,6 +1463,31 @@ export const deleteTask = async (req, res, next) => {
       });
     }
 
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this workspace',
+        });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
+    }
+
+    if (!canDeleteTask(task, workspaceDoc, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this task',
+      });
+    }
+
+    await Task.findByIdAndDelete(task._id);
     await cleanupTaskReminders(task._id);
 
     return res.status(200).json({
@@ -1113,19 +1544,21 @@ export const updateTaskOccurrence = async (req, res, next) => {
     }
 
     // 4. Enforce user & workspace ownership / permissions
-    const isOwner = task.userId && task.userId.toString() === req.user._id.toString();
-    const isAssigned = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
-    let hasAccess = isOwner || isAssigned;
-
-    if (!hasAccess && task.workspaceId) {
-      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
-    }
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied to this task',
-      });
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this workspace',
+        });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
     }
 
     // 5. Verify the task is a recurring series
@@ -1183,7 +1616,7 @@ export const updateTaskOccurrence = async (req, res, next) => {
       targetStatus = 'Done';
     } else if (['reopen', 'reopened', 'todo'].includes(normalizedAct)) {
       targetAction = 'modified';
-      targetStatus = 'To Do';
+      targetStatus = status && ['To Do', 'In Progress', 'Done'].includes(status) ? status : 'To Do';
     } else if (['complete', 'completed'].includes(normalizedAct)) {
       targetAction = 'completed';
       targetStatus = 'Done';
@@ -1195,6 +1628,22 @@ export const updateTaskOccurrence = async (req, res, next) => {
         success: false,
         message: "Invalid action. Supported actions: 'complete', 'reopen', 'skip'",
       });
+    }
+
+    if (targetAction === 'completed' || targetAction === 'modified') {
+      if (!canCompleteTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to change occurrence status',
+        });
+      }
+    } else {
+      if (!canEditTask(task, workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to modify or skip occurrence',
+        });
+      }
     }
 
     // 9. Upsert exception for this date (preventing duplicates)
@@ -1332,18 +1781,27 @@ export const rescheduleTaskOccurrence = async (req, res, next) => {
     }
 
     // 6. Enforce user & workspace ownership / permissions
-    const isOwner = task.userId && task.userId.toString() === req.user._id.toString();
-    const isAssigned = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
-    let hasAccess = isOwner || isAssigned;
-
-    if (!hasAccess && task.workspaceId) {
-      hasAccess = await verifyWorkspaceAccess(task.workspaceId, req.user._id);
+    let workspaceDoc = null;
+    if (task.workspaceId) {
+      workspaceDoc = await Workspace.findById(task.workspaceId);
+      if (!workspaceDoc || !isWorkspaceMember(workspaceDoc, req.user._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this workspace',
+        });
+      }
+      if (workspaceDoc.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: 'Workspace is archived. Restore the workspace to make changes.',
+        });
+      }
     }
 
-    if (!hasAccess) {
+    if (!canEditTask(task, workspaceDoc, req.user._id)) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied to this task',
+        message: 'Not authorized to reschedule occurrence',
       });
     }
 

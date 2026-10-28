@@ -49,6 +49,18 @@ export const taskService = {
     return response.data;
   },
 
+  // Update a comment on task
+  updateComment: async (taskId, commentId, text) => {
+    const response = await api.put(`/tasks/${taskId}/comments/${commentId}`, { text });
+    return response.data;
+  },
+
+  // Delete a comment from task
+  deleteComment: async (taskId, commentId) => {
+    const response = await api.delete(`/tasks/${taskId}/comments/${commentId}`);
+    return response.data;
+  },
+
   // Delete task
   deleteTask: async (id) => {
     const response = await api.delete(`/tasks/${id}`);

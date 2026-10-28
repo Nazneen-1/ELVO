@@ -1,8 +1,33 @@
+import crypto from 'crypto';
 import Workspace from '../models/Workspace.js';
 import User from '../models/User.js';
 import Task from '../models/Task.js';
 import Notification from '../models/Notification.js';
 import { sendWorkspaceInviteEmail } from '../utils/emailService.js';
+import {
+  getUserRole,
+  isWorkspaceMember,
+  canManageWorkspace,
+  canInviteMembers,
+  canChangeRole,
+  canRemoveMember,
+  canTransferOwnership,
+  canArchiveWorkspace,
+  canDeleteWorkspace,
+} from '../utils/workspaceAuth.js';
+
+// Helper to record activity on a workspace
+const addActivityLog = (workspace, { action, details, user, userName, metadata = {} }) => {
+  if (!workspace.activity) workspace.activity = [];
+  workspace.activity.push({
+    action,
+    details: details || '',
+    user: user || null,
+    userName: userName || '',
+    metadata,
+    timestamp: new Date(),
+  });
+};
 
 // @desc    Get all workspaces for the current user
 // @route   GET /api/workspaces
@@ -10,9 +35,17 @@ import { sendWorkspaceInviteEmail } from '../utils/emailService.js';
 export const getWorkspaces = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const workspaces = await Workspace.find({
+    const { includeArchived } = req.query;
+
+    const query = {
       $or: [{ owner: userId }, { 'members.user': userId }],
-    })
+    };
+
+    if (includeArchived !== 'true') {
+      query.isArchived = { $ne: true };
+    }
+
+    const workspaces = await Workspace.find(query)
       .populate('owner', 'name email')
       .populate('members.user', 'name email')
       .sort({ updatedAt: -1 });
@@ -53,6 +86,16 @@ export const createWorkspace = async (req, res, next) => {
           role: 'owner',
         },
       ],
+      inviteCodeActive: true,
+      activity: [
+        {
+          action: 'Workspace created',
+          details: `Workspace created by ${req.user.name}`,
+          user: req.user._id,
+          userName: req.user.name,
+          timestamp: new Date(),
+        },
+      ],
     });
 
     const populatedWorkspace = await Workspace.findById(workspace._id)
@@ -78,7 +121,8 @@ export const getWorkspaceById = async (req, res, next) => {
       $or: [{ owner: req.user._id }, { 'members.user': req.user._id }],
     })
       .populate('owner', 'name email')
-      .populate('members.user', 'name email');
+      .populate('members.user', 'name email')
+      .populate('invitations.invitedBy', 'name email');
 
     if (!workspace) {
       return res.status(404).json({
@@ -96,7 +140,7 @@ export const getWorkspaceById = async (req, res, next) => {
   }
 };
 
-// @desc    Update workspace
+// @desc    Update workspace settings
 // @route   PUT /api/workspaces/:id
 // @access  Private (Owner / Admin)
 export const updateWorkspace = async (req, res, next) => {
@@ -107,13 +151,18 @@ export const updateWorkspace = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Workspace not found' });
     }
 
-    const isOwner = workspace.owner.toString() === req.user._id.toString();
-    const isAdmin = workspace.members.some(
-      (m) => m.user.toString() === req.user._id.toString() && m.role === 'admin'
-    );
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
 
-    if (!isOwner && !isAdmin) {
-      return res.status(403).json({ success: false, message: 'Only workspace admins can update settings' });
+    if (!canManageWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only workspace owners and admins can update settings',
+      });
     }
 
     const { name, description, color, icon } = req.body;
@@ -121,6 +170,13 @@ export const updateWorkspace = async (req, res, next) => {
     if (description !== undefined) workspace.description = description;
     if (color) workspace.color = color;
     if (icon) workspace.icon = icon;
+
+    addActivityLog(workspace, {
+      action: 'Workspace settings updated',
+      details: `Settings updated by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
 
     await workspace.save();
 
@@ -137,7 +193,7 @@ export const updateWorkspace = async (req, res, next) => {
   }
 };
 
-// @desc    Join workspace with invite code
+// @desc    Join workspace with join code
 // @route   POST /api/workspaces/join
 // @access  Private
 export const joinWorkspace = async (req, res, next) => {
@@ -156,17 +212,45 @@ export const joinWorkspace = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Invalid invite code' });
     }
 
-    const alreadyMember = workspace.members.some(
-      (m) => m.user.toString() === req.user._id.toString()
-    );
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived and not accepting new members',
+      });
+    }
 
-    if (alreadyMember) {
-      return res.status(400).json({ success: false, message: 'You are already a member of this workspace' });
+    if (workspace.inviteCodeActive === false) {
+      return res.status(400).json({
+        success: false,
+        message: 'This invite code is inactive or revoked',
+      });
+    }
+
+    if (workspace.inviteCodeExpiresAt && new Date(workspace.inviteCodeExpiresAt) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: 'This invite code has expired',
+      });
+    }
+
+    if (isWorkspaceMember(workspace, req.user._id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are already a member of this workspace',
+      });
     }
 
     workspace.members.push({
       user: req.user._id,
       role: 'member',
+      joinedAt: new Date(),
+    });
+
+    addActivityLog(workspace, {
+      action: 'Member joined',
+      details: `${req.user.name} joined via join code`,
+      user: req.user._id,
+      userName: req.user.name,
     });
 
     await workspace.save();
@@ -194,72 +278,302 @@ export const joinWorkspace = async (req, res, next) => {
   }
 };
 
-// @desc    Invite member by email
-// @route   POST /api/workspaces/:id/members
-// @access  Private
-export const inviteMember = async (req, res, next) => {
+// @desc    Regenerate workspace join code
+// @route   POST /api/workspaces/:id/join-code/regenerate
+// @access  Private (Owner / Admin)
+export const regenerateJoinCode = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
+    if (!canManageWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only workspace owners and admins can regenerate join codes',
+      });
+    }
+
+    const { expiresInDays } = req.body;
+    workspace.inviteCode = crypto.randomBytes(6).toString('hex').toUpperCase();
+    workspace.inviteCodeActive = true;
+    if (expiresInDays && Number(expiresInDays) > 0) {
+      workspace.inviteCodeExpiresAt = new Date(Date.now() + Number(expiresInDays) * 24 * 60 * 60 * 1000);
+    } else {
+      workspace.inviteCodeExpiresAt = null;
+    }
+
+    addActivityLog(workspace, {
+      action: 'Join code regenerated',
+      details: `Join code regenerated by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Join code regenerated successfully',
+      data: {
+        inviteCode: workspace.inviteCode,
+        inviteCodeActive: workspace.inviteCodeActive,
+        inviteCodeExpiresAt: workspace.inviteCodeExpiresAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Revoke or toggle workspace join code
+// @route   POST /api/workspaces/:id/join-code/revoke
+// @access  Private (Owner / Admin)
+export const revokeJoinCode = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
+    if (!canManageWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only workspace owners and admins can revoke join codes',
+      });
+    }
+
+    const { active } = req.body;
+    workspace.inviteCodeActive = active !== undefined ? Boolean(active) : false;
+
+    addActivityLog(workspace, {
+      action: workspace.inviteCodeActive ? 'Join code reactivated' : 'Join code revoked',
+      details: `Join code ${workspace.inviteCodeActive ? 'reactivated' : 'revoked'} by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Join code ${workspace.inviteCodeActive ? 'reactivated' : 'revoked'} successfully`,
+      data: {
+        inviteCodeActive: workspace.inviteCodeActive,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create an email invitation
+// @route   POST /api/workspaces/:id/invitations
+// @access  Private (Owner / Admin)
+export const createInvitation = async (req, res, next) => {
   try {
     const { email, role = 'member' } = req.body;
 
     if (!email || !email.trim()) {
-      return res.status(400).json({ success: false, message: 'User email is required' });
+      return res.status(400).json({ success: false, message: 'Email address is required' });
     }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const assignedRole = ['admin', 'member', 'viewer'].includes(role) ? role : 'member';
 
     const workspace = await Workspace.findById(req.params.id);
     if (!workspace) {
       return res.status(404).json({ success: false, message: 'Workspace not found' });
     }
 
-    const isOwnerOrAdmin =
-      workspace.owner.toString() === req.user._id.toString() ||
-      workspace.members.some(
-        (m) => m.user.toString() === req.user._id.toString() && m.role === 'admin'
-      );
-
-    if (!isOwnerOrAdmin) {
-      return res.status(403).json({ success: false, message: 'Only admins can invite members' });
-    }
-
-    const targetUser = await User.findOne({ email: email.trim().toLowerCase() });
-    if (!targetUser) {
-      return res.status(404).json({
+    if (workspace.isArchived) {
+      return res.status(400).json({
         success: false,
-        message: 'No registered user found with that email address',
+        message: 'Workspace is archived. Restore the workspace to make changes.',
       });
     }
 
-    const isAlreadyMember = workspace.members.some(
-      (m) => m.user.toString() === targetUser._id.toString()
-    );
-
-    if (isAlreadyMember) {
-      return res.status(400).json({ success: false, message: 'User is already a member of this workspace' });
+    if (!canInviteMembers(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only workspace owners and admins can invite members',
+      });
     }
 
-    workspace.members.push({
-      user: targetUser._id,
-      role: ['admin', 'member', 'viewer'].includes(role) ? role : 'member',
+    // Check if user is already a member
+    const existingUser = await User.findOne({ email: cleanEmail });
+    if (existingUser && isWorkspaceMember(workspace, existingUser._id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already a member of this workspace',
+      });
+    }
+
+    // Check if there is already a pending invitation for this email
+    if (!workspace.invitations) workspace.invitations = [];
+    const activePending = workspace.invitations.find(
+      (inv) => inv.email === cleanEmail && inv.status === 'pending' && new Date(inv.expiresAt) > new Date()
+    );
+    if (activePending) {
+      return res.status(400).json({
+        success: false,
+        message: 'A pending invitation already exists for this email address',
+      });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+    const invitation = {
+      email: cleanEmail,
+      role: assignedRole,
+      token,
+      status: 'pending',
+      invitedBy: req.user._id,
+      invitedAt: new Date(),
+      expiresAt,
+    };
+
+    workspace.invitations.push(invitation);
+
+    addActivityLog(workspace, {
+      action: 'Invitation created',
+      details: `Invited ${cleanEmail} as ${assignedRole} by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+      metadata: { email: cleanEmail, role: assignedRole },
     });
 
     await workspace.save();
 
-    // Create in-app notification for invited user
-    await Notification.create({
-      userId: targetUser._id,
-      title: 'Added to Workspace',
-      message: `${req.user.name} added you to workspace "${workspace.name}"`,
-      type: 'workspace_invite',
-      relatedWorkspaceId: workspace._id,
+    // Send email notification if possible
+    try {
+      await sendWorkspaceInviteEmail({
+        toEmail: cleanEmail,
+        toName: existingUser?.name || cleanEmail,
+        inviterName: req.user.name,
+        workspaceName: workspace.name,
+        inviteCode: workspace.inviteCode,
+        role: assignedRole,
+        inviteToken: token,
+      });
+    } catch (mailErr) {
+      console.warn('Failed to send invitation email:', mailErr.message);
+    }
+
+    if (existingUser) {
+      await Notification.create({
+        userId: existingUser._id,
+        title: 'Workspace Invitation',
+        message: `${req.user.name} invited you to join workspace "${workspace.name}"`,
+        type: 'workspace_invite',
+        relatedWorkspaceId: workspace._id,
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: `Invitation sent to ${cleanEmail}`,
+      data: invitation,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Accept email invitation
+// @route   POST /api/workspaces/invitations/:token/accept
+// @access  Private
+export const acceptInvitation = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    const workspace = await Workspace.findOne({
+      'invitations.token': token,
     });
 
-    // Send email invitation to the invited user
-    await sendWorkspaceInviteEmail({
-      toEmail: targetUser.email,
-      toName: targetUser.name,
-      inviterName: req.user.name,
-      workspaceName: workspace.name,
-      inviteCode: workspace.inviteCode,
-      role,
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Invalid or expired invitation token' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'This workspace is archived and not accepting new members',
+      });
+    }
+
+    const invitation = workspace.invitations.find((inv) => inv.token === token);
+    if (!invitation) {
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
+    }
+
+    if (invitation.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `This invitation is already ${invitation.status}`,
+      });
+    }
+
+    if (new Date(invitation.expiresAt) < new Date()) {
+      invitation.status = 'expired';
+      await workspace.save();
+      return res.status(400).json({
+        success: false,
+        message: 'This invitation has expired',
+      });
+    }
+
+    if (isWorkspaceMember(workspace, req.user._id)) {
+      invitation.status = 'accepted';
+      await workspace.save();
+      return res.status(400).json({
+        success: false,
+        message: 'You are already a member of this workspace',
+      });
+    }
+
+    // Add user as member with the role specified in the invitation
+    workspace.members.push({
+      user: req.user._id,
+      role: invitation.role || 'member',
+      joinedAt: new Date(),
+    });
+
+    invitation.status = 'accepted';
+
+    addActivityLog(workspace, {
+      action: 'Member joined via invite',
+      details: `${req.user.name} accepted invitation as ${invitation.role}`,
+      user: req.user._id,
+      userName: req.user.name,
+      metadata: { role: invitation.role },
+    });
+
+    await workspace.save();
+
+    // Notify workspace owner
+    await Notification.create({
+      userId: workspace.owner,
+      title: 'Invitation Accepted',
+      message: `${req.user.name} accepted your invitation to "${workspace.name}"`,
+      type: 'workspace_invite',
+      relatedWorkspaceId: workspace._id,
     });
 
     const populated = await Workspace.findById(workspace._id)
@@ -268,7 +582,7 @@ export const inviteMember = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: `${targetUser.name} added to workspace`,
+      message: `Successfully joined ${workspace.name}`,
       data: populated,
     });
   } catch (error) {
@@ -276,9 +590,296 @@ export const inviteMember = async (req, res, next) => {
   }
 };
 
-// @desc    Remove member from workspace / leave workspace
-// @route   DELETE /api/workspaces/:id/members/:userId
+// @desc    Decline email invitation
+// @route   POST /api/workspaces/invitations/:token/decline
 // @access  Private
+export const declineInvitation = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    const workspace = await Workspace.findOne({
+      'invitations.token': token,
+    });
+
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Invalid invitation token' });
+    }
+
+    const invitation = workspace.invitations.find((inv) => inv.token === token);
+    if (!invitation) {
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
+    }
+
+    if (invitation.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `This invitation is already ${invitation.status}`,
+      });
+    }
+
+    invitation.status = 'declined';
+
+    addActivityLog(workspace, {
+      action: 'Invitation declined',
+      details: `Invitation for ${invitation.email} was declined`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Invitation declined successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Revoke an invitation
+// @route   DELETE /api/workspaces/:id/invitations/:invitationId
+// @access  Private (Owner / Admin)
+export const revokeInvitation = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
+    if (!canInviteMembers(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only workspace owners and admins can revoke invitations',
+      });
+    }
+
+    const targetInvId = req.params.invitationId || req.params.token || req.body?.token;
+    const invitation = (workspace.invitations || []).find(
+      (inv) => (inv._id && inv._id.toString() === targetInvId) || inv.token === targetInvId
+    );
+    if (!invitation) {
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
+    }
+
+    invitation.status = 'revoked';
+
+    addActivityLog(workspace, {
+      action: 'Invitation revoked',
+      details: `Invitation for ${invitation.email} revoked by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Invitation revoked successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Invite member by email directly (legacy compatibility wrapper)
+// @route   POST /api/workspaces/:id/members
+// @access  Private (Owner / Admin)
+export const inviteMember = async (req, res, next) => {
+  return createInvitation(req, res, next);
+};
+
+// @desc    Update member role
+// @route   PUT /api/workspaces/:id/members/:userId/role
+// @access  Private (Owner / Admin within boundaries)
+export const updateMemberRole = async (req, res, next) => {
+  try {
+    const { role } = req.body;
+    const targetUserId = req.params.userId;
+
+    if (!['admin', 'member', 'viewer'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role. Supported roles: 'admin', 'member', 'viewer'",
+      });
+    }
+
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
+    if (!canChangeRole(workspace, req.user._id, targetUserId, role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to change this member role or escalate privileges',
+      });
+    }
+
+    const member = workspace.members.find(
+      (m) => m.user.toString() === targetUserId.toString()
+    );
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Member not found in workspace' });
+    }
+
+    const prevRole = member.role;
+    member.role = role;
+
+    addActivityLog(workspace, {
+      action: 'Role updated',
+      details: `Role for member changed from ${prevRole} to ${role} by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+      metadata: { targetUserId, prevRole, newRole: role },
+    });
+
+    await workspace.save();
+
+    await Notification.create({
+      userId: targetUserId,
+      title: 'Workspace Role Updated',
+      message: `Your role in "${workspace.name}" was changed to ${role}`,
+      type: 'workspace_invite',
+      relatedWorkspaceId: workspace._id,
+    });
+
+    const populated = await Workspace.findById(workspace._id)
+      .populate('owner', 'name email')
+      .populate('members.user', 'name email');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Member role updated successfully',
+      data: populated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Transfer workspace ownership
+// @route   POST /api/workspaces/:id/transfer-ownership
+// @access  Private (Owner only)
+export const transferOwnership = async (req, res, next) => {
+  try {
+    const { newOwnerId } = req.body;
+
+    if (!newOwnerId) {
+      return res.status(400).json({ success: false, message: 'New owner user ID is required' });
+    }
+
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
+    if (getUserRole(workspace, req.user._id) !== 'owner') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the current workspace owner can transfer ownership',
+      });
+    }
+
+    if (!isWorkspaceMember(workspace, newOwnerId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target user must be an active member of this workspace to become owner',
+      });
+    }
+
+    if (!canTransferOwnership(workspace, req.user._id, newOwnerId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot transfer ownership to this user',
+      });
+    }
+
+    const newOwnerUser = await User.findById(newOwnerId);
+    if (!newOwnerUser) {
+      return res.status(404).json({ success: false, message: 'Target user not found' });
+    }
+
+    const prevOwnerId = workspace.owner;
+
+    // Previous owner becomes an admin (safeguard against owner lockout)
+    const prevOwnerMember = workspace.members.find(
+      (m) => m.user.toString() === prevOwnerId.toString()
+    );
+    if (prevOwnerMember) {
+      prevOwnerMember.role = 'admin';
+    } else {
+      workspace.members.push({ user: prevOwnerId, role: 'admin' });
+    }
+
+    // New owner becomes owner
+    workspace.owner = newOwnerId;
+    const newOwnerMember = workspace.members.find(
+      (m) => m.user.toString() === newOwnerId.toString()
+    );
+    if (newOwnerMember) {
+      newOwnerMember.role = 'owner';
+    } else {
+      workspace.members.push({ user: newOwnerId, role: 'owner' });
+    }
+
+    addActivityLog(workspace, {
+      action: 'ownership_transferred',
+      details: `Workspace ownership transferred from ${req.user.name} to ${newOwnerUser.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+      metadata: { prevOwnerId, newOwnerId },
+    });
+
+    await workspace.save();
+
+    await Notification.create({
+      userId: newOwnerId,
+      title: 'Ownership Transferred',
+      message: `You are now the owner of workspace "${workspace.name}"`,
+      type: 'workspace_invite',
+      relatedWorkspaceId: workspace._id,
+    });
+
+    const populated = await Workspace.findById(workspace._id)
+      .populate('owner', 'name email')
+      .populate('members.user', 'name email');
+
+    return res.status(200).json({
+      success: true,
+      message: `Workspace ownership successfully transferred to ${newOwnerUser.name}`,
+      data: populated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Remove member from workspace / voluntary departure (with optional task reassignment)
+// @route   DELETE /api/workspaces/:id/members/:userId
+// @access  Private (Owner / Admin / Self)
 export const removeMember = async (req, res, next) => {
   try {
     const workspace = await Workspace.findById(req.params.id);
@@ -286,34 +887,239 @@ export const removeMember = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Workspace not found' });
     }
 
+    if (workspace.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workspace is archived. Restore the workspace to make changes.',
+      });
+    }
+
     const targetUserId = req.params.userId;
-    const isSelf = targetUserId === req.user._id.toString();
-    const isOwner = workspace.owner.toString() === req.user._id.toString();
+    const isSelf = targetUserId.toString() === req.user._id.toString();
 
-    if (targetUserId === workspace.owner.toString()) {
-      return res.status(400).json({ success: false, message: 'Workspace owner cannot be removed' });
+    if (!canRemoveMember(workspace, req.user._id, targetUserId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to remove this member',
+      });
     }
 
-    if (!isSelf && !isOwner) {
-      return res.status(403).json({ success: false, message: 'Not authorized to remove this member' });
+    const reassignTo = req.body?.reassignTo || req.query?.reassignTo;
+    let targetReassignee = null;
+    if (reassignTo) {
+      if (!isWorkspaceMember(workspace, reassignTo)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Target reassignee is not an active member of this workspace',
+        });
+      }
+      targetReassignee = reassignTo;
     }
 
+    // Handle collaborative tasks assigned to departing member
+    // Find all collaborative tasks in this workspace where target is in assignees or assignedTo
+    const affectedTasks = await Task.find({
+      workspaceId: workspace._id,
+      $or: [
+        { assignees: targetUserId },
+        { assignedTo: targetUserId },
+        { 'subtasks.assignee': targetUserId },
+      ],
+    });
+
+    for (const task of affectedTasks) {
+      // Clean assignees
+      task.assignees = (task.assignees || []).filter(
+        (a) => a.toString() !== targetUserId.toString()
+      );
+
+      if (targetReassignee) {
+        const alreadyIn = task.assignees.some(
+          (a) => a.toString() === targetReassignee.toString()
+        );
+        if (!alreadyIn) {
+          task.assignees.push(targetReassignee);
+        }
+      }
+
+      task.assignedTo = task.assignees[0] || null;
+
+      // Clean subtask assignees
+      if (Array.isArray(task.subtasks)) {
+        task.subtasks.forEach((st) => {
+          if (st.assignee && st.assignee.toString() === targetUserId.toString()) {
+            st.assignee = targetReassignee || null;
+          }
+        });
+      }
+
+      if (!task.activity) task.activity = [];
+      task.activity.push({
+        action: 'Member departure reassignment',
+        details: targetReassignee
+          ? `Tasks reassigned from departed member to ${targetReassignee}`
+          : 'Departed member unassigned from task',
+        timestamp: new Date(),
+      });
+
+      await task.save();
+    }
+
+    // Remove from workspace members
     workspace.members = workspace.members.filter(
-      (m) => m.user.toString() !== targetUserId
+      (m) => m.user.toString() !== targetUserId.toString()
     );
+
+    addActivityLog(workspace, {
+      action: isSelf ? 'Member left' : 'Member removed',
+      details: isSelf
+        ? `${req.user.name} left the workspace`
+        : `Member ${targetUserId} removed by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+      metadata: { targetUserId, reassignTo: targetReassignee },
+    });
 
     await workspace.save();
 
     return res.status(200).json({
       success: true,
       message: isSelf ? 'You have left the workspace' : 'Member removed successfully',
+      reassignedCount: affectedTasks.length,
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Delete workspace
+// @desc    Archive workspace
+// @route   POST /api/workspaces/:id/archive
+// @access  Private (Owner only)
+export const archiveWorkspace = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (!canArchiveWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the workspace owner can archive the workspace',
+      });
+    }
+
+    if (workspace.isArchived) {
+      return res.status(400).json({ success: false, message: 'Workspace is already archived' });
+    }
+
+    workspace.isArchived = true;
+    workspace.archivedAt = new Date();
+    workspace.archivedBy = req.user._id;
+
+    addActivityLog(workspace, {
+      action: 'workspace_archived',
+      details: `Workspace archived by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    const populated = await Workspace.findById(workspace._id)
+      .populate('owner', 'name email')
+      .populate('members.user', 'name email');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Workspace archived successfully',
+      data: populated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Restore archived workspace
+// @route   POST /api/workspaces/:id/restore
+// @access  Private (Owner only)
+export const restoreWorkspace = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (!canArchiveWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the workspace owner can restore an archived workspace',
+      });
+    }
+
+    if (!workspace.isArchived) {
+      return res.status(400).json({ success: false, message: 'Workspace is not archived' });
+    }
+
+    workspace.isArchived = false;
+    workspace.archivedAt = null;
+    workspace.archivedBy = null;
+
+    addActivityLog(workspace, {
+      action: 'workspace_restored',
+      details: `Workspace restored by ${req.user.name}`,
+      user: req.user._id,
+      userName: req.user.name,
+    });
+
+    await workspace.save();
+
+    const populated = await Workspace.findById(workspace._id)
+      .populate('owner', 'name email')
+      .populate('members.user', 'name email');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Workspace restored successfully',
+      data: populated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get workspace activity log
+// @route   GET /api/workspaces/:id/activity
+// @access  Private (Workspace members only)
+export const getWorkspaceActivity = async (req, res, next) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, message: 'Workspace not found' });
+    }
+
+    if (!isWorkspaceMember(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: you are not a member of this workspace',
+      });
+    }
+
+    const activity = (workspace.activity || []).sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: activity.length,
+      data: activity,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete workspace (Owner only)
 // @route   DELETE /api/workspaces/:id
 // @access  Private (Owner only)
 export const deleteWorkspace = async (req, res, next) => {
@@ -323,11 +1129,14 @@ export const deleteWorkspace = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Workspace not found' });
     }
 
-    if (workspace.owner.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Only workspace owner can delete the workspace' });
+    if (!canDeleteWorkspace(workspace, req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the workspace owner can delete the workspace',
+      });
     }
 
-    // Unlink tasks belonging to this workspace or delete
+    // Unlink tasks belonging to this workspace
     await Task.updateMany({ workspaceId: workspace._id }, { $set: { workspaceId: null } });
     await Workspace.findByIdAndDelete(workspace._id);
 

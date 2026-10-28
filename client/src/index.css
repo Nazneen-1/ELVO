@@ -6,6 +6,7 @@
   :root {
     /* ELVO Palette */
     --elvo-noir:   #2B2B2B;
+    
     --elvo-iron:   #565656;
     --elvo-fog:    #848484;
     --elvo-silver: #B3B3B3;
@@ -173,4 +174,198 @@
 .dark .btn-elvo-outline:hover {
   background: #E0E0E0;
   color: #1A1A1A;
+}
+
+/* TipTap rich text styles */
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror p {
+  margin-bottom: 0.75em;
+}
+.ProseMirror h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+.ProseMirror h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 0.75em;
+  margin-bottom: 0.5em;
+}
+.ProseMirror h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
+.ProseMirror ul:not([data-type="taskList"]) {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin-bottom: 0.75em;
+}
+.ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  margin-bottom: 0.75em;
+}
+.ProseMirror blockquote {
+  border-left: 3px solid #848484;
+  padding-left: 0.75rem;
+  margin-left: 0;
+  margin-right: 0;
+  font-style: italic;
+  opacity: 0.85;
+}
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 0.75em;
+}
+.ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.ProseMirror ul[data-type="taskList"] li > label {
+  user-select: none;
+  margin-top: 0.2rem;
+}
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: #2b2b2b;
+}
+.dark .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  accent-color: #e0e0e0;
+}
+.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* -------------------------------------------------------------
+ * Standardized ELVO Dropdown / Select Styles
+ * ------------------------------------------------------------- */
+.select-elvo {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23565656' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 14px;
+  padding-right: 2rem !important;
+  background-color: #FFFFFF;
+  color: #2B2B2B;
+  border: 1px solid #E0E0E0;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  outline: none;
+  cursor: pointer;
+}
+
+.select-elvo:hover {
+  border-color: #B3B3B3;
+}
+
+.select-elvo:focus {
+  border-color: #565656;
+  box-shadow: 0 0 0 2px rgba(86, 86, 86, 0.2);
+}
+
+.select-elvo:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: #F5F5F5;
+}
+
+.select-elvo option {
+  background-color: #FFFFFF;
+  color: #2B2B2B;
+}
+
+.dark .select-elvo {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23B3B3B3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-color: #2B2B2B;
+  color: #E0E0E0;
+  border-color: #3A3A3A;
+}
+
+.dark .select-elvo:hover {
+  border-color: #565656;
+}
+
+.dark .select-elvo:focus {
+  border-color: #B3B3B3;
+  box-shadow: 0 0 0 2px rgba(179, 179, 179, 0.2);
+}
+
+.dark .select-elvo:disabled {
+  background-color: #1A1A1A;
+}
+
+.dark .select-elvo option {
+  background-color: #2B2B2B;
+  color: #E0E0E0;
+}
+
+/* -------------------------------------------------------------
+ * Habit Tracker Animated Flame
+ * ------------------------------------------------------------- */
+@keyframes flame-pulse {
+  0%, 100% {
+    transform: scale(1) translateY(0);
+    filter: drop-shadow(0 0 1px rgba(245, 158, 11, 0.4));
+  }
+  50% {
+    transform: scale(1.08) translateY(-0.5px);
+    filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.7));
+  }
+}
+
+@keyframes flame-glow {
+  0%, 100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-flame {
+  display: inline-block;
+  animation: flame-pulse 1.8s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+/* -------------------------------------------------------------
+ * Scroll Reveal Animation (Dashboard / Home)
+ * ------------------------------------------------------------- */
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 500ms cubic-bezier(0.16, 1, 0.3, 1), transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.reveal-on-scroll.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-flame {
+    animation: none !important;
+    transform: none !important;
+  }
+  .reveal-on-scroll {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
 }

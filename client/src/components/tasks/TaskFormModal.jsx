@@ -4,6 +4,7 @@ import { Input } from '../common/Input.jsx';
 import { Button } from '../common/Button.jsx';
 import { useTasks } from '../../context/TaskContext.jsx';
 import { useWorkspace } from '../../context/WorkspaceContext.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { toISODate, validateTaskDates } from '../../utils/dateUtils.js';
 import { Plus, X, Check, Clock, Calendar, Tag, Repeat, Bell, Users } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -45,6 +46,7 @@ export const TaskFormModal = ({
   editTask = null,
   initialStatus = 'To Do',
 }) => {
+  const { user } = useAuth();
   const { createTask, updateTask } = useTasks();
   const { workspaces, activeWorkspaceId } = useWorkspace();
 
@@ -58,11 +60,14 @@ export const TaskFormModal = ({
   const [color, setColor] = useState('indigo');
   const [status, setStatus] = useState(initialStatus || 'To Do');
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('personal');
+  const [assignees, setAssignees] = useState([]);
+  const [assignedTo, setAssignedTo] = useState('');
   const [estimatedMinutes, setEstimatedMinutes] = useState(30);
 
   // Subtasks
   const [subtasks, setSubtasks] = useState([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+  const [newSubtaskAssignee, setNewSubtaskAssignee] = useState('');
 
   // Tags
   const [tags, setTags] = useState([]);
@@ -89,8 +94,32 @@ export const TaskFormModal = ({
       setPriority(editTask.priority || 'Medium');
       setColor(editTask.color || 'indigo');
       setStatus(editTask.status || 'To Do');
-      setSelectedWorkspaceId(editTask.workspaceId || 'personal');
-      setSubtasks(editTask.subtasks || []);
+      setSelectedWorkspaceId(
+        typeof editTask.workspaceId === 'object' && editTask.workspaceId?._id
+          ? editTask.workspaceId._id.toString()
+          : editTask.workspaceId || 'personal'
+      );
+      
+      const parsedAssignees = (editTask.assignees || []).map((a) =>
+        typeof a === 'object' && a?._id ? a._id.toString() : a.toString()
+      );
+      if (parsedAssignees.length === 0 && editTask.assignedTo) {
+        const single = typeof editTask.assignedTo === 'object' && editTask.assignedTo?._id
+          ? editTask.assignedTo._id.toString()
+          : editTask.assignedTo.toString();
+        parsedAssignees.push(single);
+      }
+      setAssignees(parsedAssignees);
+      setAssignedTo(parsedAssignees[0] || '');
+
+      setSubtasks(
+        (editTask.subtasks || []).map((s) => ({
+          _id: s._id,
+          title: s.title,
+          completed: !!s.completed,
+          assignee: typeof s.assignee === 'object' && s.assignee?._id ? s.assignee._id.toString() : s.assignee || '',
+        }))
+      );
       setTags(editTask.tags || []);
       setRecurrenceFreq(editTask.recurrence?.frequency || 'none');
       setReminderEnabled(editTask.reminder?.enabled || false);
@@ -114,9 +143,13 @@ export const TaskFormModal = ({
       }
       setPriority('Medium');
       setColor('indigo');
-      setStatus(initialStatus || 'To Do');
-      setSelectedWorkspaceId(activeWorkspaceId || 'personal');
+      const defaultWsId = activeWorkspaceId === 'my-work' ? 'personal' : (activeWorkspaceId || 'personal');
+      setSelectedWorkspaceId(defaultWsId);
+      const defaultAssignees = defaultWsId !== 'personal' && user?._id ? [user._id.toString()] : [];
+      setAssignees(defaultAssignees);
+      setAssignedTo(defaultAssignees[0] || '');
       setSubtasks([]);
+      setNewSubtaskAssignee('');
       setTags([]);
       setRecurrenceFreq('none');
       setReminderEnabled(false);
@@ -124,12 +157,32 @@ export const TaskFormModal = ({
       setEstimatedMinutes(30);
     }
     setError('');
-  }, [editTask, isOpen, initialDate, initialStartTime, initialStatus, activeWorkspaceId]);
+  }, [editTask, isOpen, initialDate, initialStartTime, initialStatus, activeWorkspaceId, user]);
+
+  const handleToggleAssignee = (userId) => {
+    if (assignees.includes(userId)) {
+      const updated = assignees.filter((id) => id !== userId);
+      setAssignees(updated);
+      setAssignedTo(updated[0] || '');
+    } else {
+      const updated = [...assignees, userId];
+      setAssignees(updated);
+      setAssignedTo(updated[0] || '');
+    }
+  };
 
   const handleAddSubtask = () => {
     if (!newSubtaskTitle.trim()) return;
-    setSubtasks([...subtasks, { title: newSubtaskTitle.trim(), completed: false }]);
+    setSubtasks([
+      ...subtasks,
+      {
+        title: newSubtaskTitle.trim(),
+        completed: false,
+        assignee: newSubtaskAssignee || null,
+      },
+    ]);
     setNewSubtaskTitle('');
+    setNewSubtaskAssignee('');
   };
 
   const handleRemoveSubtask = (index) => {
@@ -194,7 +247,14 @@ export const TaskFormModal = ({
       color,
       status,
       workspaceId: selectedWorkspaceId === 'personal' ? null : selectedWorkspaceId,
-      subtasks,
+      assignees: selectedWorkspaceId !== 'personal' ? assignees : [],
+      assignedTo: (selectedWorkspaceId !== 'personal' && assignees.length > 0) ? assignees[0] : null,
+      subtasks: subtasks.map((s) => ({
+        _id: s._id,
+        title: s.title,
+        completed: !!s.completed,
+        assignee: s.assignee || null,
+      })),
       tags,
       recurrence: { frequency: recurrenceFreq, interval: 1 },
       reminder: { enabled: reminderEnabled, minutesBefore: Number(reminderMinutes) },
@@ -299,14 +359,26 @@ export const TaskFormModal = ({
 
         {/* Workspace Selector */}
         {workspaces.length > 0 && (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-zinc-400">
               Workspace
             </label>
             <select
               value={selectedWorkspaceId}
-              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedWorkspaceId(val);
+                if (val !== 'personal') {
+                  if (assignees.length === 0 && user?._id) {
+                    setAssignees([user._id.toString()]);
+                    setAssignedTo(user._id.toString());
+                  }
+                } else {
+                  setAssignees([]);
+                  setAssignedTo('');
+                }
+              }}
+              className="select-elvo w-full px-3.5 py-2 text-sm"
             >
               <option value="personal">Personal Workspace</option>
               {workspaces.map((ws) => (
@@ -315,6 +387,72 @@ export const TaskFormModal = ({
                 </option>
               ))}
             </select>
+
+            {/* Multiple Member Assignee Selector */}
+            {selectedWorkspaceId !== 'personal' && (() => {
+              const currentWs = workspaces.find((w) => w._id === selectedWorkspaceId);
+              if (!currentWs) return null;
+
+              const memberList = [];
+              if (currentWs.owner) {
+                const ownerId = typeof currentWs.owner === 'object' && currentWs.owner?._id ? currentWs.owner._id.toString() : currentWs.owner.toString();
+                const ownerName = typeof currentWs.owner === 'object' && currentWs.owner?.name ? currentWs.owner.name : 'Workspace Owner';
+                memberList.push({ id: ownerId, name: `${ownerName} (owner)` });
+              }
+              (currentWs.members || []).forEach((m) => {
+                const uId = typeof m.user === 'object' && m.user?._id ? m.user._id.toString() : m.user?.toString();
+                if (uId && !memberList.some((existing) => existing.id === uId)) {
+                  const uName = typeof m.user === 'object' && m.user?.name ? m.user.name : m.user?.email || 'Member';
+                  memberList.push({ id: uId, name: `${uName} (${m.role || 'member'})` });
+                }
+              });
+
+              return (
+                <div className="space-y-1.5 p-3 rounded-xl bg-slate-50 dark:bg-zinc-900/60 border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-zinc-400">
+                      Task Assignees ({assignees.length})
+                    </label>
+                    {assignees.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAssignees([]);
+                          setAssignedTo('');
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-rose-500"
+                      >
+                        Unassign All
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1 max-h-36 overflow-y-auto">
+                    {memberList.map((m) => {
+                      const isSelected = assignees.includes(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => handleToggleAssignee(m.id)}
+                          className={clsx(
+                            'flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium border text-left transition-colors',
+                            isSelected
+                              ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                              : 'bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:border-slate-300'
+                          )}
+                        >
+                          <span className="truncate">{m.name}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-400 dark:text-zinc-500 pt-0.5">
+                    Select one or more members. If left unassigned, this task won't appear in anyone's My Work.
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -324,23 +462,43 @@ export const TaskFormModal = ({
             Checklist / Subtasks ({subtasks.filter((s) => s.completed).length}/{subtasks.length})
           </label>
           <div className="space-y-1.5 max-h-36 overflow-y-auto">
-            {subtasks.map((st, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-white dark:bg-zinc-800 rounded-lg text-xs"
-              >
-                <span className="truncate text-slate-700 dark:text-zinc-200">{st.title}</span>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveSubtask(idx)}
-                  className="p-1 text-slate-400 hover:text-rose-500 transition-colors"
+            {subtasks.map((st, idx) => {
+              const ws = workspaces.find((w) => w._id === selectedWorkspaceId);
+              let assigneeLabel = null;
+              if (st.assignee && ws) {
+                if (ws.owner && (ws.owner._id === st.assignee || ws.owner === st.assignee)) {
+                  assigneeLabel = ws.owner.name || 'Owner';
+                } else {
+                  const m = (ws.members || []).find((mem) => (mem.user?._id || mem.user) === st.assignee);
+                  if (m) assigneeLabel = m.user?.name || m.user?.email || 'Member';
+                }
+              }
+
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-white dark:bg-zinc-800 rounded-lg text-xs"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="truncate text-slate-700 dark:text-zinc-200">{st.title}</span>
+                    {assigneeLabel && (
+                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/50 dark:border-indigo-800/50 shrink-0">
+                        @{assigneeLabel}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSubtask(idx)}
+                    className="p-1 text-slate-400 hover:text-rose-500 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               placeholder="Add step or subtask..."
@@ -354,6 +512,38 @@ export const TaskFormModal = ({
               }}
               className="flex-1 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
+            {selectedWorkspaceId !== 'personal' && (() => {
+              const currentWs = workspaces.find((w) => w._id === selectedWorkspaceId);
+              if (!currentWs) return null;
+              const memberList = [];
+              if (currentWs.owner) {
+                const ownerId = typeof currentWs.owner === 'object' && currentWs.owner?._id ? currentWs.owner._id.toString() : currentWs.owner.toString();
+                const ownerName = typeof currentWs.owner === 'object' && currentWs.owner?.name ? currentWs.owner.name : 'Owner';
+                memberList.push({ id: ownerId, name: ownerName });
+              }
+              (currentWs.members || []).forEach((m) => {
+                const uId = typeof m.user === 'object' && m.user?._id ? m.user._id.toString() : m.user?.toString();
+                if (uId && !memberList.some((existing) => existing.id === uId)) {
+                  const uName = typeof m.user === 'object' && m.user?.name ? m.user.name : 'Member';
+                  memberList.push({ id: uId, name: uName });
+                }
+              });
+
+              return (
+                <select
+                  value={newSubtaskAssignee}
+                  onChange={(e) => setNewSubtaskAssignee(e.target.value)}
+                  className="select-elvo px-2.5 py-1 text-xs"
+                >
+                  <option value="">No subtask assignee</option>
+                  {memberList.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
             <Button type="button" size="sm" variant="secondary" onClick={handleAddSubtask}>
               <Plus className="w-3.5 h-3.5" /> Add
             </Button>
@@ -401,7 +591,7 @@ export const TaskFormModal = ({
             <select
               value={recurrenceFreq}
               onChange={(e) => setRecurrenceFreq(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              className="select-elvo w-full px-3 py-1.5 text-xs"
             >
               <option value="none">Does not repeat</option>
               <option value="daily">Daily</option>
@@ -432,7 +622,7 @@ export const TaskFormModal = ({
                 <select
                   value={reminderMinutes}
                   onChange={(e) => setReminderMinutes(Number(e.target.value))}
-                  className="w-full px-3 py-1.5 text-xs rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  className="select-elvo w-full px-3 py-1.5 text-xs"
                 >
                   <option value={5}>5 minutes before</option>
                   <option value={10}>10 minutes before</option>

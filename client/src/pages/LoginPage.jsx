@@ -19,9 +19,18 @@ export const LoginPage = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // If already authenticated or authenticated via another tab, navigate directly to app
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      const fromPath = location.state?.from?.pathname;
+      const destination = (fromPath && fromPath !== '/login' && fromPath !== '/app') ? fromPath : '/app/dashboard';
+      navigate(destination, { replace: true });
+    }
+  }, [isAuthenticated, navigate, location.state]);
 
   const from = location.state?.from?.pathname || '/app/dashboard';
 

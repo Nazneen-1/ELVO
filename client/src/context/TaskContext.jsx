@@ -15,8 +15,41 @@ const TaskContext = createContext();
 export const TaskProvider = ({ children }) => {
   const [tasks, setTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterPriority, setFilterPriority] = useState('all');
+  const [filterStatus, setFilterStatusState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('elvo_tasks_filter_status');
+      return ['all', 'To Do', 'In Progress', 'Done', 'Overdue'].includes(saved) ? saved : 'all';
+    } catch {
+      return 'all';
+    }
+  });
+
+  const setFilterStatus = useCallback((val) => {
+    setFilterStatusState(val);
+    try {
+      localStorage.setItem('elvo_tasks_filter_status', val);
+    } catch (err) {
+      console.error('Failed to save tasks filter status preference:', err);
+    }
+  }, []);
+
+  const [filterPriority, setFilterPriorityState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('elvo_tasks_filter_priority');
+      return ['all', 'Low', 'Medium', 'High'].includes(saved) ? saved : 'all';
+    } catch {
+      return 'all';
+    }
+  });
+
+  const setFilterPriority = useCallback((val) => {
+    setFilterPriorityState(val);
+    try {
+      localStorage.setItem('elvo_tasks_filter_priority', val);
+    } catch (err) {
+      console.error('Failed to save tasks filter priority preference:', err);
+    }
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -192,10 +225,18 @@ export const TaskProvider = ({ children }) => {
       const response = await taskService.addComment(taskId, text);
       if (response.success) {
         setTasks((prev) =>
-          prev.map((t) => (t._id === taskId ? response.data : t))
+          prev.map((t) => {
+            if (t.isOccurrence) {
+              if (t.masterTaskId === taskId || t._id === taskId) {
+                return { ...t, comments: response.data.comments };
+              }
+              return t;
+            }
+            return t._id === taskId ? response.data : t;
+          })
         );
-        if (selectedTask && selectedTask._id === taskId) {
-          setSelectedTask(response.data);
+        if (selectedTask && (selectedTask._id === taskId || selectedTask.masterTaskId === taskId)) {
+          setSelectedTask((prev) => ({ ...prev, comments: response.data.comments }));
         }
         return { success: true, data: response.data };
       }
@@ -208,9 +249,69 @@ export const TaskProvider = ({ children }) => {
     }
   };
 
+  // Update comment on task
+  const updateComment = async (taskId, commentId, text) => {
+    try {
+      const response = await taskService.updateComment(taskId, commentId, text);
+      if (response.success) {
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.isOccurrence) {
+              if (t.masterTaskId === taskId || t._id === taskId) {
+                return { ...t, comments: response.data.comments };
+              }
+              return t;
+            }
+            return t._id === taskId ? response.data : t;
+          })
+        );
+        if (selectedTask && (selectedTask._id === taskId || selectedTask.masterTaskId === taskId)) {
+          setSelectedTask((prev) => ({ ...prev, comments: response.data.comments }));
+        }
+        return { success: true, data: response.data };
+      }
+    } catch (error) {
+      console.error('Failed to update comment:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to update comment',
+      };
+    }
+  };
+
+  // Delete comment from task
+  const deleteComment = async (taskId, commentId) => {
+    try {
+      const response = await taskService.deleteComment(taskId, commentId);
+      if (response.success) {
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.isOccurrence) {
+              if (t.masterTaskId === taskId || t._id === taskId) {
+                return { ...t, comments: response.data.comments };
+              }
+              return t;
+            }
+            return t._id === taskId ? response.data : t;
+          })
+        );
+        if (selectedTask && (selectedTask._id === taskId || selectedTask.masterTaskId === taskId)) {
+          setSelectedTask((prev) => ({ ...prev, comments: response.data.comments }));
+        }
+        return { success: true, data: response.data };
+      }
+    } catch (error) {
+      console.error('Failed to delete comment:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to delete comment',
+      };
+    }
+  };
+
   // Toggle subtask completion
   const toggleSubtask = async (taskId, subtaskId) => {
-    const task = tasks.find((t) => t._id === taskId);
+    const task = tasks.find((t) => t._id === taskId || t.masterTaskId === taskId);
     if (!task) return;
 
     const updatedSubtasks = (task.subtasks || []).map((st) =>
@@ -218,13 +319,22 @@ export const TaskProvider = ({ children }) => {
     );
 
     try {
-      const response = await taskService.patchTask(taskId, { subtasks: updatedSubtasks });
+      const targetId = task.masterTaskId || taskId;
+      const response = await taskService.patchTask(targetId, { subtasks: updatedSubtasks });
       if (response.success) {
         setTasks((prev) =>
-          prev.map((t) => (t._id === taskId ? response.data : t))
+          prev.map((t) => {
+            if (t.isOccurrence) {
+              if (t.masterTaskId === targetId || t._id === targetId) {
+                return { ...t, subtasks: response.data.subtasks };
+              }
+              return t;
+            }
+            return t._id === targetId ? response.data : t;
+          })
         );
-        if (selectedTask && selectedTask._id === taskId) {
-          setSelectedTask(response.data);
+        if (selectedTask && (selectedTask._id === targetId || selectedTask.masterTaskId === targetId)) {
+          setSelectedTask((prev) => ({ ...prev, subtasks: response.data.subtasks }));
         }
       }
     } catch (error) {
@@ -252,12 +362,20 @@ export const TaskProvider = ({ children }) => {
         if (targetAction === 'skipped') {
           // Remove only this occurrence from the calendar state
           setTasks((prev) =>
-            prev.filter((t) => t.occurrenceId !== occId && !(t.masterTaskId === masterTaskId && t.occurrenceDate === occurrenceDate))
+            prev.filter(
+              (t) =>
+                t.occurrenceId !== occId &&
+                !(
+                  t.masterTaskId === masterTaskId &&
+                  (t.occurrenceDate === occurrenceDate || t.originalOccurrenceDate === occurrenceDate)
+                )
+            )
           );
           if (
             selectedTask &&
             (selectedTask.occurrenceId === occId ||
-              (selectedTask.masterTaskId === masterTaskId && selectedTask.occurrenceDate === occurrenceDate))
+              (selectedTask.masterTaskId === masterTaskId &&
+                (selectedTask.occurrenceDate === occurrenceDate || selectedTask.originalOccurrenceDate === occurrenceDate)))
           ) {
             setSelectedTask(null);
             setIsDetailOpen(false);
@@ -268,7 +386,8 @@ export const TaskProvider = ({ children }) => {
             prev.map((t) => {
               if (
                 t.occurrenceId === occId ||
-                (t.masterTaskId === masterTaskId && t.occurrenceDate === occurrenceDate)
+                (t.masterTaskId === masterTaskId &&
+                  (t.occurrenceDate === occurrenceDate || t.originalOccurrenceDate === occurrenceDate))
               ) {
                 return { ...t, status: targetStatus };
               }
@@ -282,7 +401,8 @@ export const TaskProvider = ({ children }) => {
           if (
             selectedTask &&
             (selectedTask.occurrenceId === occId ||
-              (selectedTask.masterTaskId === masterTaskId && selectedTask.occurrenceDate === occurrenceDate))
+              (selectedTask.masterTaskId === masterTaskId &&
+                (selectedTask.occurrenceDate === occurrenceDate || selectedTask.originalOccurrenceDate === occurrenceDate)))
           ) {
             setSelectedTask((prev) => ({
               ...prev,
@@ -435,7 +555,7 @@ export const TaskProvider = ({ children }) => {
     setFilterStatus('all');
     setFilterPriority('all');
     setSearchQuery('');
-  }, []);
+  }, [setFilterStatus, setFilterPriority]);
 
   // Map tasks by ISO date string (yyyy-MM-dd) for fast grid rendering
   const tasksByDate = useMemo(() => {
@@ -459,7 +579,7 @@ export const TaskProvider = ({ children }) => {
         if (!matches) return;
       }
 
-      const isoDate = toISODate(task.startDate);
+      const isoDate = task.occurrenceDate || toISODate(task.startDate);
       if (!map[isoDate]) {
         map[isoDate] = [];
       }
@@ -552,6 +672,8 @@ export const TaskProvider = ({ children }) => {
         calendarError,
         setCalendarError,
         addComment,
+        updateComment,
+        deleteComment,
         toggleSubtask,
         selectedTask,
         setSelectedTask,

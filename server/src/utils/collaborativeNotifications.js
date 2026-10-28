@@ -22,54 +22,77 @@ const verifyUserWorkspaceAccess = async (workspaceId, userId) => {
  * 2. Validate assignee has workspace membership if task belongs to a workspace.
  * 3. Idempotency: prevent duplicate unread notifications for the same task and recipient.
  */
-export const notifyTaskAssignment = async ({ task, actor, prevAssigneeId = null }) => {
+export const notifyTaskAssignment = async ({ task, actor, prevAssigneeId = null, prevAssignees = [] }) => {
   try {
-    if (!task || !task.assignedTo) return null;
+    if (!task) return null;
 
-    const assigneeIdStr = task.assignedTo.toString();
+    const currentAssigneeIds = new Set();
+    if (Array.isArray(task.assignees) && task.assignees.length > 0) {
+      task.assignees.forEach((a) => {
+        const aId = a?._id ? a._id.toString() : a?.toString();
+        if (aId) currentAssigneeIds.add(aId);
+      });
+    } else if (task.assignedTo) {
+      const aId = task.assignedTo?._id ? task.assignedTo._id.toString() : task.assignedTo.toString();
+      if (aId) currentAssigneeIds.add(aId);
+    }
+
+    if (currentAssigneeIds.size === 0) return null;
+
     const actorIdStr = actor?._id ? actor._id.toString() : null;
-
-    // 1. Suppress self-notification
-    if (actorIdStr && assigneeIdStr === actorIdStr) {
-      return null;
+    const prevIds = new Set(
+      Array.isArray(prevAssignees)
+        ? prevAssignees.map((id) => (id?._id ? id._id.toString() : id?.toString()))
+        : []
+    );
+    if (prevAssigneeId) {
+      prevIds.add(prevAssigneeId.toString());
     }
 
-    // 2. Suppress if assignee did not change
-    if (prevAssigneeId && prevAssigneeId.toString() === assigneeIdStr) {
-      return null;
-    }
-
-    // 3. Security: Check workspace entitlement
-    if (task.workspaceId) {
-      const hasAccess = await verifyUserWorkspaceAccess(task.workspaceId, task.assignedTo);
-      if (!hasAccess) {
-        console.warn(`[CollaborativeNotifications] Assignee ${assigneeIdStr} lacks access to workspace ${task.workspaceId}`);
-        return null;
-      }
-    }
-
-    // 4. Idempotency: Avoid duplicate unread assignment notification for this task
-    const existing = await Notification.findOne({
-      userId: task.assignedTo,
-      relatedTaskId: task._id,
-      type: 'task_assigned',
-      read: false,
-    });
-    if (existing) {
-      return existing;
-    }
-
+    const createdNotifications = [];
     const actorName = actor?.name || 'A team member';
-    const notification = await Notification.create({
-      userId: task.assignedTo,
-      title: 'Task Assigned',
-      message: `${actorName} assigned you to "${task.title}"`,
-      type: 'task_assigned',
-      relatedTaskId: task._id,
-      relatedWorkspaceId: task.workspaceId || null,
-    });
 
-    return notification;
+    for (const assigneeId of currentAssigneeIds) {
+      // 1. Suppress self-notification
+      if (actorIdStr && assigneeId === actorIdStr) continue;
+
+      // 2. Suppress if assignee was already assigned previously
+      if (prevIds.has(assigneeId)) continue;
+
+      // 3. Security: Check workspace entitlement
+      if (task.workspaceId) {
+        const hasAccess = await verifyUserWorkspaceAccess(task.workspaceId, assigneeId);
+        if (!hasAccess) {
+          console.warn(`[CollaborativeNotifications] Assignee ${assigneeId} lacks access to workspace ${task.workspaceId}`);
+          continue;
+        }
+      }
+
+      // 4. Idempotency: Avoid duplicate unread assignment notification for this task
+      const existing = await Notification.findOne({
+        userId: assigneeId,
+        relatedTaskId: task._id,
+        type: 'task_assigned',
+        read: false,
+      });
+      if (existing) {
+        createdNotifications.push(existing);
+        continue;
+      }
+
+      const notification = await Notification.create({
+        userId: assigneeId,
+        title: 'Task Assigned',
+        message: `${actorName} assigned you to "${task.title}"`,
+        type: 'task_assigned',
+        relatedTaskId: task._id,
+        relatedWorkspaceId: task.workspaceId || null,
+      });
+
+      createdNotifications.push(notification);
+    }
+
+    return createdNotifications[0] || null;
   } catch (err) {
     console.error('[CollaborativeNotifications] Error in notifyTaskAssignment:', err.message);
     return null;

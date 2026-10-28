@@ -20,7 +20,9 @@ import {
   Briefcase,
   Sparkles,
   FileText,
-  Target
+  Target,
+  Layers,
+  CheckCircle2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -37,7 +39,7 @@ const NAV_ITEMS = [
   { to: '/app/dashboard', label: 'Home', icon: LayoutDashboard },
   { to: '/app/calendar', label: 'Calendar', icon: Calendar },
   { to: '/app/tasks', label: 'Tasks', icon: CheckSquare },
-  { to: '/app/focus', label: 'Focus', icon: Target },
+  { to: '/app/habits', label: 'Habit Tracker', icon: CheckCircle2 },
   { to: '/app/workspaces', label: 'Projects', icon: Briefcase },
   { to: '/app/notes', label: 'Notes', icon: FileText },
   { to: '/app/settings', label: 'Settings', icon: Settings },
@@ -84,16 +86,16 @@ export const AppShell = ({ children }) => {
     : '?';
 
   return (
-    <div className="min-h-screen flex bg-elvo-white dark:bg-[#1A1A1A] transition-colors font-sans">
+    <div className="h-screen w-screen overflow-hidden flex bg-elvo-white dark:bg-[#1A1A1A] transition-colors font-sans">
       {/* ───── Desktop Sidebar ───── */}
       <aside
         className={clsx(
-          'hidden md:flex flex-col border-r border-[#E0E0E0] dark:border-[#3A3A3A] bg-[#F5F5F5] dark:bg-[#2B2B2B] transition-all duration-200 shrink-0',
+          'hidden md:flex flex-col h-screen border-r border-[#E0E0E0] dark:border-[#3A3A3A] bg-[#F5F5F5] dark:bg-[#2B2B2B] transition-all duration-200 shrink-0 select-none z-30',
           sidebarCollapsed ? 'w-[72px]' : 'w-[260px]'
         )}
       >
         {/* Brand */}
-        <div className="h-20 flex items-center justify-between px-5">
+        <div className="h-20 flex items-center justify-between px-5 shrink-0">
           {!sidebarCollapsed && (
             <NavLink to="/app/dashboard" className="flex items-center gap-2.5">
               <ElvoLogo size={28} />
@@ -119,7 +121,7 @@ export const AppShell = ({ children }) => {
 
         {/* Workspace Quick Indicator */}
         {!sidebarCollapsed && (
-          <div className="px-4 pt-1 pb-3">
+          <div className="px-4 pt-1 pb-3 shrink-0">
             <NavLink
               to="/app/workspaces"
               className="flex items-center justify-between px-3 py-2 rounded-xl bg-white dark:bg-[#1A1A1A] border border-[#E0E0E0] dark:border-[#3A3A3A] hover:border-elvo-silver dark:hover:border-elvo-fog transition-colors shadow-subtle"
@@ -127,11 +129,17 @@ export const AppShell = ({ children }) => {
               <div className="flex items-center gap-2 min-w-0">
                 {activeWorkspaceId === 'personal' ? (
                   <Sparkles className="w-3.5 h-3.5 text-elvo-iron dark:text-elvo-silver shrink-0" />
+                ) : activeWorkspaceId === 'my-work' ? (
+                  <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 ) : (
                   <Briefcase className="w-3.5 h-3.5 text-elvo-iron dark:text-elvo-silver shrink-0" />
                 )}
                 <span className="text-xs font-semibold text-elvo-noir dark:text-white truncate">
-                  {activeWorkspaceId === 'personal' ? 'Personal Space' : activeWorkspace?.name || 'Workspace'}
+                  {activeWorkspaceId === 'personal'
+                    ? 'Personal Space'
+                    : activeWorkspaceId === 'my-work'
+                    ? 'My Work (Aggregated)'
+                    : activeWorkspace?.name || 'Workspace'}
                 </span>
               </div>
             </NavLink>
@@ -139,7 +147,7 @@ export const AppShell = ({ children }) => {
         )}
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-2 space-y-1">
+        <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto min-h-0">
           {sidebarCollapsed && (
             <button
               onClick={() => setSidebarCollapsed(false)}
@@ -154,7 +162,7 @@ export const AppShell = ({ children }) => {
         </nav>
 
         {/* Bottom Section */}
-        <div className="px-3 py-4 border-t border-[#E0E0E0] dark:border-[#3A3A3A] space-y-1">
+        <div className="px-3 py-4 border-t border-[#E0E0E0] dark:border-[#3A3A3A] space-y-1 shrink-0">
           <button
             onClick={toggleTheme}
             className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-elvo-iron dark:text-elvo-silver hover:bg-black/5 dark:hover:bg-white/5 hover:text-elvo-noir dark:hover:text-white transition-colors"
@@ -258,11 +266,11 @@ export const AppShell = ({ children }) => {
       )}
 
       {/* ───── Main Content Area ───── */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#F5F5F5] dark:bg-[#1A1A1A]">
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-[#F5F5F5] dark:bg-[#1A1A1A]">
         {/* Top Header Bar for Desktop (Collapsed) & Mobile */}
         {(sidebarCollapsed || true) && ( // Always show a minimal header for mobile, conditional for desktop
            <header className={clsx(
-             "sticky top-0 z-30 h-14 flex items-center justify-between px-4 sm:px-6 border-b border-[#E0E0E0] dark:border-[#3A3A3A] bg-white/90 dark:bg-[#2B2B2B]/90 backdrop-blur-md",
+             "sticky top-0 z-20 shrink-0 h-14 flex items-center justify-between px-4 sm:px-6 border-b border-[#E0E0E0] dark:border-[#3A3A3A] bg-white/90 dark:bg-[#2B2B2B]/90 backdrop-blur-md",
              !sidebarCollapsed && "md:hidden" // Hide on desktop if sidebar is open, keep clean look
            )}>
              {/* Mobile menu button / Logo */}
@@ -303,12 +311,12 @@ export const AppShell = ({ children }) => {
         )}
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto min-h-0">
           {children}
         </main>
 
         {/* Mobile Bottom Navigation */}
-        <nav className="md:hidden sticky bottom-0 z-30 flex items-center border-t border-[#E0E0E0] dark:border-[#3A3A3A] bg-white/95 dark:bg-[#2B2B2B]/95 backdrop-blur-md safe-area-pb">
+        <nav className="md:hidden shrink-0 sticky bottom-0 z-30 flex items-center border-t border-[#E0E0E0] dark:border-[#3A3A3A] bg-white/95 dark:bg-[#2B2B2B]/95 backdrop-blur-md safe-area-pb">
           {NAV_ITEMS.slice(0, 5).map((item) => (
             <NavLink
               key={item.to}

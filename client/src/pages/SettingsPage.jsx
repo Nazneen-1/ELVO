@@ -321,7 +321,7 @@ export const SettingsPage = () => {
               <select
                 value={firstDayOfWeek}
                 onChange={(e) => handleFirstDayOfWeekChange(Number(e.target.value))}
-                className="w-full px-4 py-3 rounded-xl bg-white/40 dark:bg-black/20 border border-white/60 dark:border-[#3A3A3A] text-sm text-[#2B2B2B] dark:text-white focus:outline-none focus:border-[#565656] transition-colors appearance-none"
+                className="select-elvo w-full px-4 py-2.5 text-sm"
               >
                 <option value={0}>Sunday</option>
                 <option value={1}>Monday</option>
@@ -335,7 +335,7 @@ export const SettingsPage = () => {
               <select
                 value={defaultView}
                 onChange={(e) => handleDefaultViewChange(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-white/40 dark:bg-black/20 border border-white/60 dark:border-[#3A3A3A] text-sm text-[#2B2B2B] dark:text-white focus:outline-none focus:border-[#565656] transition-colors appearance-none"
+                className="select-elvo w-full px-4 py-2.5 text-sm"
               >
                 <option value="dashboard">Dashboard Overview</option>
                 <option value="calendar">Month Calendar</option>
