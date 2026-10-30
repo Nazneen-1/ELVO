@@ -23,7 +23,7 @@ npm run dev
 cd client
 npm install
 cp .env.example .env
-# Ensure your client environment variables point to the backend (e.g., VITE_API_URL)
+# Ensure your client environment variables point to the backend (e.g., VITE_API_BASE_URL)
 npm run dev
 ```
 

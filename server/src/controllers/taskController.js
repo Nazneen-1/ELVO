@@ -276,11 +276,12 @@ export const getTasks = async (req, res, next) => {
 
     // Text search query on title or description
     if (q && q.trim()) {
+      const sanitizedQ = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const searchMatch = {
         $or: [
-          { title: { $regex: q.trim(), $options: 'i' } },
-          { description: { $regex: q.trim(), $options: 'i' } },
-          { tags: { $regex: q.trim(), $options: 'i' } },
+          { title: { $regex: sanitizedQ, $options: 'i' } },
+          { description: { $regex: sanitizedQ, $options: 'i' } },
+          { tags: { $regex: sanitizedQ, $options: 'i' } },
         ],
       };
       if (query.$or) {

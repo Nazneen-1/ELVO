@@ -9,13 +9,23 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
 
+const nodeEnv = process.env.NODE_ENV || 'development';
+const rawJwtSecret = process.env.JWT_SECRET;
+const defaultDevSecret = 'dev_jwt_secret_change_in_production_32chars';
+
+if (nodeEnv === 'production') {
+  if (!rawJwtSecret || rawJwtSecret === defaultDevSecret || rawJwtSecret === 'your_development_jwt_secret_min_32_characters_long') {
+    throw new Error('SECURITY CONFIGURATION ERROR: A dedicated, strong JWT_SECRET must be configured in production environment variables.');
+  }
+}
+
 export const config = {
   port: process.env.PORT || 5000,
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   mongodbUri: process.env.MONGODB_URI || '',
   MONGODB_URI: process.env.MONGODB_URI || '',
   mongoUri: process.env.MONGODB_URI || '',
-  jwtSecret: process.env.JWT_SECRET || 'dev_jwt_secret_change_in_production_32chars',
+  jwtSecret: rawJwtSecret || defaultDevSecret,
   jwtExpire: process.env.JWT_EXPIRE || '7d',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   // Email configuration (optional - add to .env to enable email features)

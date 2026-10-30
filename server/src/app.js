@@ -16,6 +16,9 @@ import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
 const app = express();
 
+// Trust first proxy for correct client IP detection behind reverse proxies (Render, Vercel)
+app.set('trust proxy', 1);
+
 // Security HTTP headers with cross-origin allowance
 app.use(
   helmet({
