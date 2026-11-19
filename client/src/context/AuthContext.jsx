@@ -169,8 +169,9 @@ export const AuthProvider = ({ children }) => {
   // Login
   const login = async (email, password) => {
     setError(null);
+    const cleanEmail = typeof email === 'string' ? email.trim() : '';
     try {
-      const response = await authService.login({ email, password });
+      const response = await authService.login({ email: cleanEmail, password });
       if (response.success) {
         const { user: loggedInUser, token: newToken } = response.data;
         setStoredToken(newToken);
@@ -198,7 +199,33 @@ export const AuthProvider = ({ children }) => {
         return { success: true, user: loggedInUser };
       }
     } catch (err) {
-      const message = err.response?.data?.message || 'Invalid email or password.';
+      let message = 'Unable to sign in. Please try again.';
+
+      if (err.response) {
+        const status = err.response.status;
+        const dataMessage = typeof err.response.data === 'object' ? err.response.data?.message : null;
+
+        if (status === 401) {
+          message = dataMessage || 'Invalid email or password.';
+        } else if (status === 400) {
+          message = dataMessage || 'Please provide a valid email and password.';
+        } else if (status === 429) {
+          message = dataMessage || 'Too many sign-in attempts. Please try again after 15 minutes.';
+        } else if (status === 502 || status === 503 || status === 504) {
+          message = 'The server is currently waking up or temporarily unavailable. Please try again in a moment.';
+        } else if (status >= 500) {
+          message = dataMessage || 'The server encountered an error while signing in. Please try again shortly.';
+        } else {
+          message = dataMessage || `Sign in request failed (${status}).`;
+        }
+      } else if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        message = 'The server took too long to respond while waking up. Please try signing in again.';
+      } else if (err.code === 'ERR_NETWORK' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        message = 'Network connection error. Please check your internet connection.';
+      } else {
+        message = err.message || 'An unexpected error occurred during sign in.';
+      }
+
       setError(message);
       return { success: false, error: message };
     } finally {

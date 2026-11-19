@@ -24,7 +24,7 @@ export const ProtectedRoute = ({ children }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F5F5F5] dark:bg-[#1A1A1A] text-elvo-noir dark:text-white transition-colors">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-9 h-9 border-3 border-indigo-600 dark:border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-9 h-9 border-3 border-[#2B2B2B] dark:border-[#E0E0E0] border-t-transparent rounded-full animate-spin"></div>
           <div className="text-center">
             <p className="text-sm font-semibold tracking-wide text-elvo-noir dark:text-white">ELVO</p>
             <p className="text-xs text-elvo-fog mt-0.5">Loading your workspace...</p>

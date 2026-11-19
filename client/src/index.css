@@ -347,8 +347,8 @@
  * ------------------------------------------------------------- */
 .reveal-on-scroll {
   opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 500ms cubic-bezier(0.16, 1, 0.3, 1), transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(28px);
+  transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1), transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
   will-change: opacity, transform;
 }
 
@@ -357,15 +357,64 @@
   transform: translateY(0);
 }
 
+/* Stagger delay classes for cascading row reveals */
+.reveal-delay-1 { transition-delay: 80ms; }
+.reveal-delay-2 { transition-delay: 160ms; }
+.reveal-delay-3 { transition-delay: 240ms; }
+.reveal-delay-4 { transition-delay: 320ms; }
+.reveal-delay-5 { transition-delay: 400ms; }
+
+/* -------------------------------------------------------------
+ * Premium Homepage & Section Scroll Reveal System
+ * ------------------------------------------------------------- */
+.hp-reveal {
+  opacity: 0;
+  will-change: opacity, transform;
+  transition: opacity 700ms cubic-bezier(0.16, 1, 0.3, 1), transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hp-reveal-up {
+  transform: translateY(32px);
+}
+.hp-reveal-down {
+  transform: translateY(-24px);
+}
+.hp-reveal-left {
+  transform: translateX(-32px);
+}
+.hp-reveal-right {
+  transform: translateX(32px);
+}
+.hp-reveal-scale {
+  transform: scale(0.95) translateY(18px);
+}
+
+.hp-reveal.is-revealed {
+  opacity: 1;
+  transform: translate(0, 0) scale(1);
+}
+
+/* Stagger delay utility classes */
+.hp-delay-1 { transition-delay: 80ms; }
+.hp-delay-2 { transition-delay: 160ms; }
+.hp-delay-3 { transition-delay: 240ms; }
+.hp-delay-4 { transition-delay: 320ms; }
+.hp-delay-5 { transition-delay: 400ms; }
+.hp-delay-6 { transition-delay: 480ms; }
+.hp-delay-7 { transition-delay: 560ms; }
+.hp-delay-8 { transition-delay: 640ms; }
+
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   .animate-flame {
     animation: none !important;
     transform: none !important;
   }
-  .reveal-on-scroll {
+  .reveal-on-scroll,
+  .hp-reveal {
     opacity: 1 !important;
     transform: none !important;
     transition: none !important;
+    transition-delay: 0ms !important;
   }
 }

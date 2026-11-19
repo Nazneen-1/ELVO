@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Footer } from '../components/layout/Footer.jsx';
+import { useScrollReveal } from '../hooks/useScrollReveal.js';
 import { ArrowRight, Calendar, CheckSquare, Users, Zap, Shield } from 'lucide-react';
 
 // ELVO Logo as inline SVG
@@ -68,6 +69,19 @@ const FEATURE_CARDS = [
 export const LandingPage = () => {
   const heroRef = useRef(null);
 
+  // Initialize content-aware scroll reveal animations
+  useScrollReveal({ threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+  // Smooth scroll handler for top navbar navigation with header offset
+  const handleNavClick = (e, targetId) => {
+    e.preventDefault();
+    const targetEl = document.getElementById(targetId);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.history.pushState(null, '', `#${targetId}`);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F5F5F5] text-[#2B2B2B]">
       {/* ═══ NAVBAR ═══ */}
@@ -85,7 +99,8 @@ export const LandingPage = () => {
               <a
                 key={item}
                 href={`#${item.toLowerCase()}`}
-                className="text-sm font-medium text-[#565656] hover:text-[#2B2B2B] transition-colors"
+                onClick={(e) => handleNavClick(e, item.toLowerCase())}
+                className="text-sm font-medium text-[#565656] hover:text-[#2B2B2B] transition-colors cursor-pointer"
               >
                 {item}
               </a>
@@ -116,22 +131,22 @@ export const LandingPage = () => {
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
               {/* Left: Text */}
-              <div className="animate-fade-up">
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#2B2B2B]/8 border border-[#B3B3B3]/40 text-xs font-semibold uppercase tracking-widest text-[#565656] mb-8">
+              <div>
+                <div className="hp-reveal hp-reveal-up inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#2B2B2B]/8 border border-[#B3B3B3]/40 text-xs font-semibold uppercase tracking-widest text-[#565656] mb-8">
                   A smarter way to plan
                 </div>
 
-                <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-[#2B2B2B] leading-[1.05] mb-6">
+                <h1 className="hp-reveal hp-reveal-up text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-[#2B2B2B] leading-[1.05] mb-6">
                   Elevate<br />
                   your everyday.
                 </h1>
 
-                <p className="text-lg text-[#565656] leading-relaxed mb-10 max-w-md">
+                <p className="hp-reveal hp-reveal-up hp-delay-1 text-lg text-[#565656] leading-relaxed mb-10 max-w-md">
                   Plan your time. Organize your work.<br />
                   Stay focused on what matters.
                 </p>
 
-                <div className="flex flex-wrap items-center gap-4 mb-10">
+                <div className="hp-reveal hp-reveal-up hp-delay-2 flex flex-wrap items-center gap-4 mb-10">
                   <Link to="/register" className="btn-elvo">
                     Get Started <ArrowRight className="w-4 h-4" />
                   </Link>
@@ -141,7 +156,7 @@ export const LandingPage = () => {
                 </div>
 
                 {/* Trust line */}
-                <div className="flex items-center gap-3">
+                <div className="hp-reveal hp-reveal-up hp-delay-3 flex items-center gap-3">
                   <div className="flex -space-x-2">
                     {['#848484', '#565656', '#2B2B2B'].map((bg, i) => (
                       <div
@@ -160,7 +175,7 @@ export const LandingPage = () => {
               </div>
 
               {/* Right: App Mockup */}
-              <div className="relative animate-fade-up delay-200 hidden lg:block">
+              <div className="relative hp-reveal hp-reveal-scale hp-delay-2 hidden lg:block">
                 <div className="relative rounded-2xl overflow-hidden shadow-elvo-lg border border-[#E0E0E0]">
                   <img
                     src="/elvo-hero.jpg"
@@ -179,11 +194,11 @@ export const LandingPage = () => {
         </section>
 
         {/* ═══ WHY ELVO SECTION ═══ */}
-        <section id="features" className="py-20 lg:py-28 bg-[#F5F5F5]">
+        <section id="features" className="scroll-mt-16 sm:scroll-mt-20 py-20 lg:py-28 bg-[#F5F5F5]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
               {/* Left */}
-              <div>
+              <div className="hp-reveal hp-reveal-left">
                 <p className="text-xs font-semibold uppercase tracking-widest text-[#848484] mb-4">Why ELVO</p>
                 <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#2B2B2B] leading-tight mb-8">
                   Your day shouldn't<br />feel scattered.
@@ -196,15 +211,14 @@ export const LandingPage = () => {
                 </p>
               </div>
 
-              {/* Right: Feature Pills */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {/* Right: Feature Pills with content-aware stagger */}
+              <div data-stagger data-stagger-step="75" className="hp-stagger-group grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {FEATURES.map((f, i) => {
                   const Icon = f.icon;
                   return (
                     <div
                       key={f.title}
-                      className="group p-5 rounded-2xl border border-[#E0E0E0] bg-white hover:border-[#B3B3B3] hover:shadow-card transition-all duration-200 cursor-default"
-                      style={{ animationDelay: `${i * 80}ms` }}
+                      className="hp-reveal hp-reveal-scale group p-5 rounded-2xl border border-[#E0E0E0] bg-white hover:border-[#B3B3B3] hover:shadow-card transition-all duration-200 cursor-default"
                     >
                       <div className="w-9 h-9 rounded-xl bg-[#F5F5F5] border border-[#E0E0E0] flex items-center justify-center mb-3 group-hover:bg-[#2B2B2B] group-hover:border-[#2B2B2B] transition-colors">
                         <Icon className="w-4 h-4 text-[#565656] group-hover:text-white transition-colors" />
@@ -220,11 +234,11 @@ export const LandingPage = () => {
         </section>
 
         {/* ═══ DARK FEATURES SECTION ═══ */}
-        <section id="workflow" className="py-20 lg:py-28 bg-[#2B2B2B] text-white">
+        <section id="workflow" className="scroll-mt-16 sm:scroll-mt-20 py-20 lg:py-28 bg-[#2B2B2B] text-white">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-start">
               {/* Left */}
-              <div>
+              <div className="hp-reveal hp-reveal-up">
                 <p className="text-xs font-semibold uppercase tracking-widest text-[#848484] mb-4">Features</p>
                 <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white leading-tight mb-6">
                   Everything<br />your day needs.
@@ -242,20 +256,20 @@ export const LandingPage = () => {
                 </Link>
               </div>
 
-              {/* Right: Feature Cards Grid */}
-              <div className="grid grid-cols-2 gap-4">
-                {FEATURE_CARDS.map((card) => (
+              {/* Right: Feature Cards Grid with progressive directional reveal */}
+              <div data-stagger data-stagger-step="120" className="hp-stagger-group grid grid-cols-2 gap-4">
+                {FEATURE_CARDS.map((card, i) => (
                   <div
                     key={card.title}
-                    className="p-5 rounded-2xl bg-[#1A1A1A] border border-[#3A3A3A] hover:border-[#565656] transition-all duration-200 group"
+                    className={`hp-reveal hp-reveal-right hp-delay-${i + 1} p-5 rounded-2xl bg-[#1A1A1A] border border-[#3A3A3A] hover:border-[#565656] transition-all duration-200 group`}
                   >
                     <p className="text-sm font-bold text-white mb-1">{card.title}</p>
                     <p className="text-xs text-[#848484] mb-4">{card.desc}</p>
                     {card.items && (
                       <div className="space-y-2">
-                        {card.items.map((item, i) => (
+                        {card.items.map((item, idx) => (
                           <div
-                            key={i}
+                            key={idx}
                             className="text-[11px] text-[#B3B3B3] bg-[#2B2B2B] rounded-lg px-3 py-2 font-medium"
                           >
                             {item}
@@ -282,11 +296,11 @@ export const LandingPage = () => {
         </section>
 
         {/* ═══ CUSTOMIZATION SECTION ═══ */}
-        <section id="about" className="py-20 lg:py-28 bg-[#F5F5F5]">
+        <section id="about" className="scroll-mt-16 sm:scroll-mt-20 py-20 lg:py-28 bg-[#F5F5F5]">
           <div className="max-w-7xl mx-auto px-6 lg:px-8">
             <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-              {/* Left: UI Mockup Placeholder */}
-              <div className="relative">
+              {/* Left: UI Mockup Placeholder with scale-reveal */}
+              <div className="relative hp-reveal hp-reveal-scale">
                 <div className="rounded-2xl overflow-hidden border border-[#E0E0E0] bg-white shadow-card p-6">
                   <div className="flex items-center gap-3 mb-5">
                     <ElvoLogo size={28} />
@@ -321,8 +335,8 @@ export const LandingPage = () => {
                 </div>
               </div>
 
-              {/* Right: Text */}
-              <div>
+              {/* Right: Text with independent coordinated reveal */}
+              <div className="hp-reveal hp-reveal-left hp-delay-2">
                 <p className="text-xs font-semibold uppercase tracking-widest text-[#848484] mb-4">Make it yours</p>
                 <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#2B2B2B] leading-tight mb-6">
                   A workspace<br />that adapts to you.
@@ -343,18 +357,18 @@ export const LandingPage = () => {
         </section>
 
         {/* ═══ CTA SECTION ═══ */}
-        <section id="pricing" className="py-20 lg:py-28 bg-[#2B2B2B] text-white text-center">
+        <section id="pricing" className="scroll-mt-16 sm:scroll-mt-20 py-20 lg:py-28 bg-[#2B2B2B] text-white text-center">
           <div className="max-w-3xl mx-auto px-6 lg:px-8">
-            <p className="text-xs font-semibold uppercase tracking-widest text-[#848484] mb-5">Ready to begin?</p>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white mb-6">
+            <p className="hp-reveal hp-reveal-up text-xs font-semibold uppercase tracking-widest text-[#848484] mb-5">Ready to begin?</p>
+            <h2 className="hp-reveal hp-reveal-up text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white mb-6">
               Ready to elevate<br />your everyday?
             </h2>
-            <p className="text-[#B3B3B3] text-lg mb-10">
+            <p className="hp-reveal hp-reveal-up hp-delay-1 text-[#B3B3B3] text-lg mb-10">
               Start organizing, focusing and achieving — all in one place.
             </p>
             <Link
               to="/register"
-              className="inline-flex items-center gap-2 px-8 py-4 bg-[#E0E0E0] text-[#2B2B2B] rounded-xl text-sm font-bold hover:bg-white transition-colors shadow-lg"
+              className="hp-reveal hp-reveal-scale hp-delay-2 inline-flex items-center gap-2 px-8 py-4 bg-[#E0E0E0] text-[#2B2B2B] rounded-xl text-sm font-bold hover:bg-white transition-colors shadow-lg"
             >
               Get Started — It's Free <ArrowRight className="w-4 h-4" />
             </Link>

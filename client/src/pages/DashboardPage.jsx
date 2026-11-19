@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useTasks } from '../context/TaskContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
+import { useHabits } from '../context/HabitContext.jsx';
+import { useNotes } from '../context/NoteContext.jsx';
 import { format, parseISO, startOfDay, addDays, subDays } from 'date-fns';
 import { toISODate, formatDisplayTime } from '../utils/dateUtils.js';
 import {
@@ -28,7 +30,9 @@ import { clsx } from 'clsx';
 
 export const DashboardPage = () => {
   const { user } = useAuth();
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, workspaces } = useWorkspace();
+  const { habits, stats: habitStats } = useHabits();
+  const { notes } = useNotes();
   const {
     tasks,
     fetchTasks,
@@ -71,7 +75,7 @@ export const DashboardPage = () => {
     fetchDashboardTasks();
   }, [fetchDashboardTasks]);
 
-  // Scroll reveal animation observer
+  // Scroll reveal animation observer (targets main scroll container)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -80,6 +84,8 @@ export const DashboardPage = () => {
       });
       return;
     }
+
+    const scrollRoot = document.querySelector('main') || null;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -90,10 +96,14 @@ export const DashboardPage = () => {
           }
         });
       },
-      { threshold: 0.08, rootMargin: '0px 0px -20px 0px' }
+      {
+        root: scrollRoot,
+        threshold: 0.1,
+        rootMargin: '0px 0px -25px 0px',
+      }
     );
 
-    const elements = document.querySelectorAll('.reveal-on-scroll');
+    const elements = document.querySelectorAll('.reveal-on-scroll:not(.is-revealed)');
     elements.forEach((el) => observer.observe(el));
 
     return () => observer.disconnect();
@@ -220,9 +230,9 @@ export const DashboardPage = () => {
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 sm:px-8 lg:px-10 py-10 sm:py-14">
         {/* Header Section */}
-        <div className="reveal-on-scroll flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div className="flex items-center gap-10">
-            <div>
+            <div className="reveal-on-scroll">
               <p className="text-[11px] font-bold tracking-[0.2em] text-[#565656] dark:text-[#848484] mb-2 uppercase">
                 {greeting},
               </p>
@@ -236,7 +246,7 @@ export const DashboardPage = () => {
 
             <div className="hidden md:block h-16 w-px bg-[#E0E0E0] dark:bg-[#3A3A3A] mx-4" />
 
-            <div className="hidden md:block">
+            <div className="reveal-on-scroll reveal-delay-2 hidden md:block">
               <p className="text-xs font-medium tracking-[0.2em] text-[#565656] dark:text-[#848484] uppercase leading-relaxed">
                 Small steps<br />
                 still move<br />
@@ -248,32 +258,26 @@ export const DashboardPage = () => {
             variant="primary"
             size="md"
             onClick={() => setIsFormOpen(true)}
-            className="self-start md:self-auto rounded-full px-5 py-2.5 shadow-lg shadow-black/5"
+            className="reveal-on-scroll reveal-delay-2 self-start md:self-auto rounded-full px-5 py-2.5 shadow-lg shadow-black/5"
           >
             <Plus className="w-4 h-4 mr-1.5" />
             New Task
           </Button>
         </div>
 
-        {/* Stats Cards */}
-        <div className="reveal-on-scroll grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard icon={ListChecks} label="Total Tasks" value={totalCount} to="/app/tasks" />
-          <StatCard icon={CheckCircle2} label="Completed" value={completedCount} to="/app/tasks" />
-          <StatCard icon={Clock} label="In Progress" value={inProgressCount} to="/app/tasks" />
-          <StatCard
-            icon={AlertTriangle}
-            label="Overdue"
-            value={overdueTasks.length}
-            isAlert={overdueTasks.length > 0}
-            to="/app/tasks"
-          />
+        {/* Stats Cards with Staggered Cascading Reveal */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard className="reveal-on-scroll reveal-delay-1" icon={ListChecks} label="Total Tasks" value={totalCount} to="/app/tasks" />
+          <StatCard className="reveal-on-scroll reveal-delay-2" icon={CheckCircle2} label="Completed" value={completedCount} to="/app/tasks" />
+          <StatCard className="reveal-on-scroll reveal-delay-3" icon={Clock} label="In Progress" value={inProgressCount} to="/app/tasks" />
+          <StatCard className="reveal-on-scroll reveal-delay-4" icon={AlertTriangle} label="Overdue" value={overdueTasks.length} isAlert={overdueTasks.length > 0} to="/app/tasks" />
         </div>
 
-        {/* Core Modules / Feature Hub */}
-        <div className="reveal-on-scroll grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {/* Core Modules / Feature Hub with Staggered Cascading Reveal */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Link
             to="/app/calendar"
-            className="group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
+            className="reveal-on-scroll reveal-delay-1 group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
           >
             <div className="flex items-center justify-between">
               <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
@@ -289,7 +293,7 @@ export const DashboardPage = () => {
 
           <Link
             to="/app/habits"
-            className="group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
+            className="reveal-on-scroll reveal-delay-2 group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
           >
             <div className="flex items-center justify-between">
               <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
@@ -305,7 +309,7 @@ export const DashboardPage = () => {
 
           <Link
             to="/app/notes"
-            className="group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
+            className="reveal-on-scroll reveal-delay-3 group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
           >
             <div className="flex items-center justify-between">
               <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
@@ -321,7 +325,7 @@ export const DashboardPage = () => {
 
           <Link
             to="/app/workspaces"
-            className="group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
+            className="reveal-on-scroll reveal-delay-4 group p-4 rounded-2xl bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle hover:border-[#B3B3B3] dark:hover:border-[#565656] transition-all flex flex-col justify-between h-28"
           >
             <div className="flex items-center justify-between">
               <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
@@ -337,9 +341,9 @@ export const DashboardPage = () => {
         </div>
 
         {/* Today + Upcoming Layout */}
-        <div className="reveal-on-scroll grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Today's Tasks */}
-          <section className="bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle overflow-hidden relative">
+          <section className="reveal-on-scroll bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle overflow-hidden relative">
             <div className="flex items-center justify-between px-6 py-5 border-b border-white/20 dark:border-[#3A3A3A]/40 relative z-10">
               <div className="flex items-center gap-2.5">
                 <CalendarDays className="w-4 h-4 text-[#2B2B2B] dark:text-white" />
@@ -384,7 +388,7 @@ export const DashboardPage = () => {
           </section>
 
           {/* Upcoming Tasks */}
-          <section className="bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle overflow-hidden relative">
+          <section className="reveal-on-scroll reveal-delay-2 bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle overflow-hidden relative">
             <div className="flex items-center justify-between px-6 py-5 border-b border-white/20 dark:border-[#3A3A3A]/40 relative z-10">
               <div className="flex items-center gap-2.5">
                 <TrendingUp className="w-4 h-4 text-[#2B2B2B] dark:text-white" />
@@ -427,6 +431,87 @@ export const DashboardPage = () => {
                 </div>
               )}
             </div>
+          </section>
+        </div>
+
+        {/* Feature Highlights Section: Habit Tracker & Notes/Projects */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Habit Tracker Section */}
+          <section className="reveal-on-scroll bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle p-6 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-[#2B2B2B] dark:text-white">Habit Tracker</h2>
+                    <p className="text-[11px] text-[#565656] dark:text-[#848484]">Consistency & daily streaks</p>
+                  </div>
+                </div>
+                <Link
+                  to="/app/habits"
+                  className="text-[11px] uppercase tracking-wider font-semibold text-[#565656] dark:text-[#B3B3B3] hover:text-[#2B2B2B] dark:hover:text-white transition-colors inline-flex items-center gap-1"
+                >
+                  Open Tracker <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 my-4">
+                <div className="p-3.5 rounded-xl bg-white/50 dark:bg-[#1A1A1A]/50 border border-white/50 dark:border-[#3A3A3A]/40">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-[#848484]">Active Habits</p>
+                  <p className="text-xl font-light text-[#2B2B2B] dark:text-white mt-0.5">{habits?.length || 0}</p>
+                </div>
+                <div className="p-3.5 rounded-xl bg-white/50 dark:bg-[#1A1A1A]/50 border border-white/50 dark:border-[#3A3A3A]/40">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-[#848484]">Best Streak</p>
+                  <p className="text-xl font-light text-[#2B2B2B] dark:text-white mt-0.5">
+                    {habitStats?.longestStreak || habitStats?.currentStreak || 0} <span className="text-xs font-normal text-[#848484]">days</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#565656] dark:text-[#B3B3B3] mt-2">
+              Track consistency across days and visualize routines in the dedicated Habit Matrix.
+            </p>
+          </section>
+
+          {/* Notes & Projects Feature Section */}
+          <section className="reveal-on-scroll reveal-delay-2 bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 shadow-subtle p-6 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#E0E0E0]/60 dark:bg-[#1A1A1A]/60 flex items-center justify-center text-[#2B2B2B] dark:text-white">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-[#2B2B2B] dark:text-white">Notes & Collaboration</h2>
+                    <p className="text-[11px] text-[#565656] dark:text-[#848484]">Knowledge base & team spaces</p>
+                  </div>
+                </div>
+                <Link
+                  to="/app/notes"
+                  className="text-[11px] uppercase tracking-wider font-semibold text-[#565656] dark:text-[#B3B3B3] hover:text-[#2B2B2B] dark:hover:text-white transition-colors inline-flex items-center gap-1"
+                >
+                  View Notes <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 my-4">
+                <div className="p-3.5 rounded-xl bg-white/50 dark:bg-[#1A1A1A]/50 border border-white/50 dark:border-[#3A3A3A]/40">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-[#848484]">Total Notes</p>
+                  <p className="text-xl font-light text-[#2B2B2B] dark:text-white mt-0.5">{notes?.length || 0}</p>
+                </div>
+                <div className="p-3.5 rounded-xl bg-white/50 dark:bg-[#1A1A1A]/50 border border-white/50 dark:border-[#3A3A3A]/40">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-[#848484]">Workspaces</p>
+                  <p className="text-xl font-light text-[#2B2B2B] dark:text-white mt-0.5">{workspaces?.length || 1}</p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#565656] dark:text-[#B3B3B3] mt-2">
+              Organize documentation, tag notes, and link tasks directly into collaborative workspaces.
+            </p>
           </section>
         </div>
 
@@ -493,7 +578,7 @@ export const DashboardPage = () => {
   );
 };
 
-const StatCard = ({ icon: Icon, label, value, isAlert = false, to }) => {
+const StatCard = ({ icon: Icon, label, value, isAlert = false, to, className }) => {
   const cardElement = (
     <div className={clsx(
       "bg-white/40 dark:bg-[#2B2B2B]/40 backdrop-blur-xl rounded-2xl border border-white/60 dark:border-[#3A3A3A]/60 p-5 shadow-subtle flex flex-col justify-between h-28 relative overflow-hidden group transition-all",
@@ -515,7 +600,7 @@ const StatCard = ({ icon: Icon, label, value, isAlert = false, to }) => {
     </div>
   );
 
-  return to ? <Link to={to}>{cardElement}</Link> : cardElement;
+  return to ? <Link to={to} className={clsx("block", className)}>{cardElement}</Link> : <div className={className}>{cardElement}</div>;
 };
 
 const TaskRow = ({ task, onClick, onToggleComplete, showDate = false, isUpdating = false }) => {

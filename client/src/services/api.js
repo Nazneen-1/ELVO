@@ -49,6 +49,12 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
+      // Do not treat login / register credentials failure as a session expiration event
+      const requestUrl = error.config?.url || '';
+      if (requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register')) {
+        return Promise.reject(error);
+      }
+
       // Extract the bearer token that was sent on this specific failing request
       const authHeader = error.config?.headers?.Authorization || error.config?.headers?.authorization;
       const requestToken = authHeader && typeof authHeader === 'string'

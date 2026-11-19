@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { authService } from '../services/authService.js';
 import { Input } from '../components/common/Input.jsx';
 
 const ElvoLogo = ({ size = 32 }) => (
@@ -18,10 +19,27 @@ export const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [slowNotice, setSlowNotice] = useState(false);
 
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Pre-warm backend on mount (non-blocking wake-up for Render cold start)
+  useEffect(() => {
+    authService.pingHealth().catch(() => {});
+  }, []);
+
+  // Show helpful status message if backend is taking a few moments to spin up
+  useEffect(() => {
+    let timer;
+    if (isSubmitting) {
+      timer = setTimeout(() => setSlowNotice(true), 3200);
+    } else {
+      setSlowNotice(false);
+    }
+    return () => clearTimeout(timer);
+  }, [isSubmitting]);
 
   // If already authenticated or authenticated via another tab, navigate directly to app
   React.useEffect(() => {
@@ -36,30 +54,34 @@ export const LoginPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return; // Prevent duplicate concurrent submissions
     setErrorMessage('');
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       setErrorMessage('Please fill in all fields.');
       return;
     }
 
     setIsSubmitting(true);
-    const result = await login(email, password);
-    setIsSubmitting(false);
-
-    if (result.success) {
-      const fromPath = location.state?.from?.pathname;
-      const validViews = {
-        dashboard: '/app/dashboard',
-        calendar: '/app/calendar',
-        tasks: '/app/tasks',
-      };
-      const preferredLanding = result.user?.preferences?.defaultLandingView;
-      const defaultDest = validViews[preferredLanding] || '/app/dashboard';
-      const destination = (fromPath && fromPath !== '/login' && fromPath !== '/app') ? fromPath : defaultDest;
-      navigate(destination, { replace: true });
-    } else {
-      setErrorMessage(result.error || 'Failed to sign in.');
+    try {
+      const result = await login(cleanEmail, password);
+      if (result.success) {
+        const fromPath = location.state?.from?.pathname;
+        const validViews = {
+          dashboard: '/app/dashboard',
+          calendar: '/app/calendar',
+          tasks: '/app/tasks',
+        };
+        const preferredLanding = result.user?.preferences?.defaultLandingView;
+        const defaultDest = validViews[preferredLanding] || '/app/dashboard';
+        const destination = (fromPath && fromPath !== '/login' && fromPath !== '/app') ? fromPath : defaultDest;
+        navigate(destination, { replace: true });
+      } else {
+        setErrorMessage(result.error || 'Failed to sign in.');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -164,10 +186,19 @@ export const LoginPage = () => {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full bg-[#E0E0E0] text-[#1A1A1A] hover:bg-white rounded-lg px-4 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-70 mt-4"
+              className="w-full bg-[#E0E0E0] text-[#1A1A1A] hover:bg-white rounded-lg px-4 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-70 mt-4 cursor-pointer disabled:cursor-not-allowed"
             >
-              {isSubmitting ? 'Signing in...' : 'Sign In →'}
+              {isSubmitting
+                ? slowNotice
+                  ? 'Connecting to server...'
+                  : 'Signing in...'
+                : 'Sign In →'}
             </button>
+            {slowNotice && isSubmitting && (
+              <p className="text-[11px] text-[#B3B3B3] text-center mt-2 animate-pulse">
+                The server is waking up after inactivity. Thank you for your patience...
+              </p>
+            )}
           </form>
 
           <p className="text-xs text-[#848484] text-center mt-8">
